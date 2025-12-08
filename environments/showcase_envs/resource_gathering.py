@@ -3,7 +3,9 @@ from word_play.environment import Environment, Environment_State, Environment_Pr
 from word_play.presets.movement_system_presets import INFINITE_2D_MOVEMENT_SYSTEM, Position_2D, Move_Right, Move_Left, Move_Up, Move_Down
 
 class Resource(Entity):
-    pass
+    @property
+    def exposed_actions(self): return []
+    def step(self, env): pass
 
 class Gatherer(Entity):
     def __init__(self, state, properties):
