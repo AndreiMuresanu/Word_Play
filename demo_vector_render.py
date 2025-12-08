@@ -3,6 +3,7 @@ from word_play.environment import Environment_State, Environment_Properties, Ent
 from environments.complex_test_env.env import ComplexTestEnv
 from environments.complex_test_env.entities import SmartAgent, SmartAgentProperties, Obstacle, SimpleEntityProperties, Gold, Trap
 from word_play.presets.movement_system_presets import INFINITE_2D_MOVEMENT_SYSTEM, Position_2D
+from word_play.renderer import AsciiRenderer
 
 def dummy_reward(action_selections, env): return [0.0]
 
@@ -37,8 +38,9 @@ def run_demo():
     base_env = envs[0] # Just use the first one as the caller
     
     print("\n--- Testing env.render(envs=envs, number_of_environments=6) ---")
-    # Use the base_env to trigger the vector render
-    base_env.render(envs=envs, number_of_environments=6, clear=False)
+    # Visualize using unified AsciiRenderer
+    renderer = AsciiRenderer(envs, cols=2)
+    renderer.render(count=4)
 
     print("\n--- Testing return_string=True ---")
     output = base_env.render(envs=envs, number_of_environments=4, return_string=True, clear=False)
