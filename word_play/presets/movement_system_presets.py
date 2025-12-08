@@ -2,21 +2,21 @@ from dataclasses import dataclass
 from word_play.environment import Action_On_Self, Entity, Position, Movement_System, Environment
 
 
-@dataclass(slots=True)
+@dataclass
 class Single_Point_Position(Position):
 	CONSTANT_POSITION = 0
 
 	def __str__(self):
 		return f'{self.CONSTANT_POSITION}'
 
-@dataclass(slots=True)
+@dataclass
 class Position_1D(Position):
 	x: int
 	
 	def __str__(self):
 		return f'{self.x}'
 
-@dataclass(slots=True)
+@dataclass
 class Position_2D(Position):
 	x: int
 	y: int

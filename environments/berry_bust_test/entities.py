@@ -3,11 +3,12 @@ from word_play.environment import Entity, Entity_State, Entity_Properties, Envir
 from environments.berry_bust_test.actions import PickBerry, Unlock
 
 
-@dataclass(slots=True)
+@dataclass
 class BerryBushProperties(Entity_Properties):
 	berry_type: str
+	symbol: str = 'B'
 
-@dataclass(slots=True)
+@dataclass
 class BerryBush_State(Entity_State):
 	berry_count: int
 

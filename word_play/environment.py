@@ -1,14 +1,14 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import NamedTuple, Callable
+from typing import NamedTuple, Callable, Optional
 from enum import Enum
 
 
 # ---------------------------------------- Movement System Definition ----------------------------------------
 
 # TODO: do we need to add an abstract __eq__ method? tbd as needs arise
-@dataclass(slots=True)
+@dataclass
 class Position(ABC):
 	# We keep Position as an ABC with no assumption because environments may have non-coordinate based positions.
 	# For example, consider the enum based location-wise (ie., graph-based) positions: 'market', 'office', 'home', etc.
@@ -20,7 +20,7 @@ class Position(ABC):
 
 # TODO: need to check that position_type is being validated in a nice way
 # TODO: maybe this can be made simpler and more effecient (we can likely sacrifice some generality)
-@dataclass(slots=True)
+@dataclass
 class Movement_System:
 	position_type: Position
 	movement_options: list[Action_On_Self]
@@ -69,7 +69,7 @@ class Action_Selection(NamedTuple):
 #	in order to perserve the ability for people to create fully customizable and minimal envs
 # NOTE: We delibrately exclude a default __str__ method to force env creators to think about it
 #	(We may rethink this decision at some point)
-@dataclass(slots=True)
+@dataclass
 class Observation(ABC):
 	possible_actions: list[Action_Selection]
 
@@ -80,12 +80,12 @@ class Observation(ABC):
 
 # ---------------------------------------- Entity Definition ----------------------------------------
 
-@dataclass(slots=True)
+@dataclass
 class Entity_Properties:
 	'''Entities can inherit from the this class to track more complex properties.'''
 	name: str
 
-@dataclass(slots=True)
+@dataclass
 class Entity_State:
 	'''Entities can inherit from the this class to track more complex states.'''
 	position: Position
@@ -171,12 +171,12 @@ class Agent(Entity):
 
 # ---------------------------------------- Environment Definition ----------------------------------------
 
-@dataclass(slots=True)
+@dataclass
 class Environment_Properties:
 	'''Environments can inherit from the this class to track more complex properties.'''
 	description: str
 
-@dataclass(slots=True)
+@dataclass
 class Environment_State:
 	'''
 	Environments can inherit from the this class to track more complex states.
@@ -256,10 +256,20 @@ class Environment(ABC):
 		'''This method is used by the reset() method to reset environment specific state.'''
 		pass
 
-	def render(self) -> None:
+	def render(self, **kwargs) -> Optional[str]:
 		'''This is for visualizing the environment. It is not required to be implemented.'''
-		raise NotImplementedError('This environment does not support rendering.')
+		from word_play.renderer import AsciiRenderer
+		if not hasattr(self, '_renderer'):
+			self._renderer = AsciiRenderer(self)
+		return self._renderer.render(**kwargs)
 	
+	def get_position_color(self, position: Position) -> Optional[str]:
+		'''
+		Returns the color string for a specific position in the environment.
+		Used by the renderer to colorize the terrain.
+		Return None to use default rendering.
+		'''
+		return None
 
 	def reset(self, seed=None) -> None:
 		self._reset(seed=seed)

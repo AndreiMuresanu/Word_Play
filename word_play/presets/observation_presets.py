@@ -72,7 +72,7 @@ def format_actions_taken(
 	return obs_str.strip()
 
 
-@dataclass(slots=True)
+@dataclass
 class Possible_Actions_And_Last_Reward(Observation):
 	last_reward: float
 	
@@ -80,7 +80,7 @@ class Possible_Actions_And_Last_Reward(Observation):
 		return f'Previous Round Reward: {self.last_reward}\n\nPossible Actions:\n{format_possible_actions(self.possible_actions)}'
 
 
-@dataclass(slots=True)
+@dataclass
 class Conversation_Possible_Actions_And_Last_Reward(Observation):
 	last_reward: float
 	conversation: list[str]
@@ -91,7 +91,7 @@ class Conversation_Possible_Actions_And_Last_Reward(Observation):
 		return f'Messages From Players:\n{format_conversation(self.conversation, self.all_agent_names, self.observing_agent_id)}\n\nPrevious Round Reward: {self.last_reward}\n\nPossible Actions:\n{format_possible_actions(self.possible_actions)}'
 	
 
-@dataclass(slots=True)
+@dataclass
 class Discussion_Phase_With_Full_Info(Observation):
 	last_reward: float
 	# NOTE: we can filter out message from non-nearby agents when initializing the observation
