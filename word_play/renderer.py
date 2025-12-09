@@ -22,13 +22,14 @@ class AsciiRenderer:
         'RESET': '\033[0m'
     }
 
-    def __init__(self, envs: Union[Environment, List[Environment]], cols: int = 2):
+    def __init__(self, envs: Union[Environment, List[Environment]], cols: int = 2, tile_size: int = 1):
         if isinstance(envs, Environment):
             self.envs = [envs]
         else:
             self.envs = envs
             
         self.cols = cols
+        self.tile_size = tile_size
         self.ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
     def _colorize(self, text: str, color: str) -> str:
@@ -138,41 +139,49 @@ class AsciiRenderer:
             if 0 <= r < height and 0 <= c < width:
                 grid[r][c].append(entity)
         
-        # NOTE: We keep the simple box border here as the 'frame' of the map
-        out_func("+" + "-" * width + "+")
+        # Scale frame width
+        total_width = width * self.tile_size
+        
+        # Top Border
+        out_func("┌" + "─" * total_width + "┐")
+        
         for r in range(height - 1, -1, -1):
-            line_str = "|"
-            for c in range(width):
-                cell_entities = grid[r][c]
-                
-                actual_x = c + min_x
-                actual_y = r + min_y
-                pos = Position_2D(int(actual_x), int(actual_y))
-                env_color = env.get_position_color(pos)
+            # Render each sub-row of the tile
+            for sub_r in range(self.tile_size):
+                line_str = "│"
+                for c in range(width):
+                    cell_entities = grid[r][c]
+                    
+                    # Determine start/end indices for entities in this logical cell
+                    start_slot = sub_r * self.tile_size
+                    
+                    actual_x = c + min_x
+                    actual_y = r + min_y
+                    pos = Position_2D(int(actual_x), int(actual_y))
+                    env_color = env.get_position_color(pos)
 
-                if not cell_entities:
-                    sym = "."
-                    if env_color:
-                        sym = self._colorize(sym, env_color)
-                    line_str += sym
-                elif len(cell_entities) == 1:
-                    e = cell_entities[0]
-                    sym = self._get_symbol(e)
-                    col = self._get_entity_color(e)
-                    line_str += self._colorize(sym, col)
-                else:
-                    agents = [e for e in cell_entities if hasattr(e, 'actions_on_self') or getattr(e, 'is_agent', False) or 'Agent' in e.__class__.__name__]
-                    if len(agents) > 1:
-                        line_str += self._colorize("+", "MAGENTA")
-                    elif len(agents) == 1:
-                        e = agents[0]
-                        line_str += self._colorize(self._get_symbol(e), self._get_entity_color(e)) 
-                    else:
-                        count = len(cell_entities)
-                        sym = str(count) if count < 10 else "*"
-                        line_str += self._colorize(sym, "CYAN")
-            out_func(line_str + "|")
-        out_func("+" + "-" * width + "+")
+                    for sub_c in range(self.tile_size):
+                        slot_idx = start_slot + sub_c
+                        
+                        sym = "."
+                        if env_color:
+                            sym = self._colorize(sym, env_color)
+                        
+                        if slot_idx < len(cell_entities):
+                            e = cell_entities[slot_idx]
+                            max_slots = self.tile_size * self.tile_size
+                            if slot_idx == max_slots - 1 and len(cell_entities) > max_slots:
+                                sym = self._colorize("+", "MAGENTA")
+                            else:
+                                raw_sym = self._get_symbol(e)
+                                col = self._get_entity_color(e)
+                                sym = self._colorize(raw_sym, col)
+                        
+                        line_str += sym
+
+                out_func(line_str + "│")
+        # Bottom Border
+        out_func("└" + "─" * total_width + "┘")
 
     def _render_generic(self, env: Environment, out_func):
         out_func("Generic Render:")
@@ -303,6 +312,6 @@ class AsciiRenderer:
         print(final_str)
 
 # Backward compatibility / Helper
-def render_vector_envs(envs: list[Environment], cols: int = 2, count: Optional[int] = None, clear: bool = True, show_legend: bool = True, return_string: bool = False):
-    renderer = AsciiRenderer(envs, cols)
+def render_vector_envs(envs: list[Environment], cols: int = 2, count: Optional[int] = None, clear: bool = True, show_legend: bool = True, return_string: bool = False, tile_size: int = 1):
+    renderer = AsciiRenderer(envs, cols, tile_size=tile_size)
     return renderer.render(count=count, clear=clear, show_legend=show_legend, return_string=return_string)

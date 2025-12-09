@@ -65,15 +65,19 @@ def create_resource_gathering():
         reward_func=lambda *args: [0]
     )
 
+# 4. Adventure Game Imports
+from environments.showcase_envs.adventure_game import create_adventure_game
+
 def run_showcase():
     print("Initializing Showcase...")
     envs = [
         create_predator_prey(),
         create_dungeon(),
-        create_resource_gathering()
+        create_resource_gathering(),
+        create_adventure_game()
     ]
     
-    renderer = AsciiRenderer(envs, cols=3)
+    renderer = AsciiRenderer(envs, cols=2, tile_size=2)
     
     print("Starting Simulation Loop (20 steps)...")
     for step in range(20):
