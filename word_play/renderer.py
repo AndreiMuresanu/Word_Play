@@ -22,7 +22,7 @@ class AsciiRenderer:
         'RESET': '\033[0m'
     }
 
-    def __init__(self, envs: Union[Environment, List[Environment]], cols: int = 2, tile_size: int = 1):
+    def __init__(self, envs: Union[Environment, List[Environment]], cols: int = 2, tile_size: Union[int, str] = 1):
         if isinstance(envs, Environment):
             self.envs = [envs]
         else:
@@ -140,27 +140,32 @@ class AsciiRenderer:
                 grid[r][c].append(entity)
         
         # Scale frame width
-        total_width = width * self.tile_size
+        # If tile_size was auto-determined, use it, otherwise use instance default
+        current_tile_size = getattr(self, '_current_tile_size', 1) 
+        if self.tile_size != 'auto': 
+            current_tile_size = self.tile_size
+
+        total_width = width * current_tile_size
         
         # Top Border
         out_func("┌" + "─" * total_width + "┐")
         
         for r in range(height - 1, -1, -1):
             # Render each sub-row of the tile
-            for sub_r in range(self.tile_size):
+            for sub_r in range(current_tile_size):
                 line_str = "│"
                 for c in range(width):
                     cell_entities = grid[r][c]
                     
                     # Determine start/end indices for entities in this logical cell
-                    start_slot = sub_r * self.tile_size
+                    start_slot = sub_r * current_tile_size
                     
                     actual_x = c + min_x
                     actual_y = r + min_y
                     pos = Position_2D(int(actual_x), int(actual_y))
                     env_color = env.get_position_color(pos)
 
-                    for sub_c in range(self.tile_size):
+                    for sub_c in range(current_tile_size):
                         slot_idx = start_slot + sub_c
                         
                         sym = "."
@@ -169,9 +174,23 @@ class AsciiRenderer:
                         
                         if slot_idx < len(cell_entities):
                             e = cell_entities[slot_idx]
-                            max_slots = self.tile_size * self.tile_size
+                            max_slots = current_tile_size * current_tile_size
+                            
+                            # Overflow handling
                             if slot_idx == max_slots - 1 and len(cell_entities) > max_slots:
-                                sym = self._colorize("+", "MAGENTA")
+                                # Calculate how many entities are hidden including this slot
+                                # hidden_count = len(cell_entities) - (max_slots - 1)
+                                # Show the count as a hex digit (1-9, A-Z) if possible, or '*'
+                                # Actually user hates '+'. Let's show count.
+                                hidden = len(cell_entities) - slot_idx
+                                # If hidden is 1, it means we are replacing the last slot entity with '1'? No that's confusing.
+                                # The + usually means "and more".
+                                # If we strictly conform to "No +", let's use '*' or just numeric count of TOTAL in cell
+                                # But we want to see individual IDs.
+                                # Let's show the count of *extra* agents.
+                                
+                                overflow_str = str(hidden) if hidden < 10 else "*"
+                                sym = self._colorize(overflow_str, "MAGENTA")
                             else:
                                 raw_sym = self._get_symbol(e)
                                 col = self._get_entity_color(e)
@@ -198,7 +217,8 @@ class AsciiRenderer:
             if key not in unique_entities:
                 unique_entities[key] = name
         
-        unique_entities[('+', 'MAGENTA')] = 'Stacked Agents'
+        if ('+', 'MAGENTA') in unique_entities:
+             del unique_entities[('+', 'MAGENTA')]
         
         out_func("Legend:")
         legend_items = []
@@ -224,6 +244,26 @@ class AsciiRenderer:
         limit = count if count is not None else number_of_environments
         if limit is not None:
              targets = targets[:limit]
+
+        # Auto-scaling logic if enabled
+        if self.tile_size == 'auto':
+            max_density = 1
+            for env in targets:
+                # Poor man's density check: iterate all entities and count per pos
+                # Optimization: do this only if 'auto'
+                counts = {}
+                for e in env.state.entities:
+                    p = (e.state.position.x, e.state.position.y) if hasattr(e.state.position, 'x') else str(e.state.position)
+                    counts[p] = counts.get(p, 0) + 1
+                if counts:
+                    max_density = max(max_density, max(counts.values()))
+            
+            # Calculate required tile size (width/height of square)
+            # ceil(sqrt(max_density))
+            req_size = math.ceil(math.sqrt(max_density))
+            self._current_tile_size = max(1, req_size)
+        else:
+            self._current_tile_size = self.tile_size
 
         buffer = []
         def out(s):
@@ -312,6 +352,6 @@ class AsciiRenderer:
         print(final_str)
 
 # Backward compatibility / Helper
-def render_vector_envs(envs: list[Environment], cols: int = 2, count: Optional[int] = None, clear: bool = True, show_legend: bool = True, return_string: bool = False, tile_size: int = 1):
+def render_vector_envs(envs: list[Environment], cols: int = 2, count: Optional[int] = None, clear: bool = True, show_legend: bool = True, return_string: bool = False, tile_size: Union[int, str] = 1):
     renderer = AsciiRenderer(envs, cols, tile_size=tile_size)
     return renderer.render(count=count, clear=clear, show_legend=show_legend, return_string=return_string)

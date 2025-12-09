@@ -77,7 +77,7 @@ def run_showcase():
         create_adventure_game()
     ]
     
-    renderer = AsciiRenderer(envs, cols=2, tile_size=2)
+    renderer = AsciiRenderer(envs, cols=2, tile_size='auto')
     
     print("Starting Simulation Loop (20 steps)...")
     for step in range(20):
