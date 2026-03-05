@@ -1,198 +1,335 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import NamedTuple, Callable
+from dataclasses import dataclass, field
+from typing import NamedTuple, Callable, Any, TypeVar
 from enum import Enum
 
 
 # ---------------------------------------- Movement System Definition ----------------------------------------
 
+
 # TODO: do we need to add an abstract __eq__ method? tbd as needs arise
 @dataclass(slots=True)
 class Position(ABC):
-	# We keep Position as an ABC with no assumption because environments may have non-coordinate based positions.
-	# For example, consider the enum based location-wise (ie., graph-based) positions: 'market', 'office', 'home', etc.
-	# additionally, position comparison functions (ex., '>') may be useful
-	@abstractmethod
-	def __str__(self):
-		pass
+    # We keep Position as an ABC with no assumption because environments may have non-coordinate based positions.
+    # For example, consider the enum based location-wise (ie., graph-based) positions: 'market', 'office', 'home', etc.
+    # additionally, position comparison functions (ex., '>') may be useful
+    @abstractmethod
+    def __str__(self):
+        pass
 
 
 # TODO: need to check that position_type is being validated in a nice way
 # TODO: maybe this can be made simpler and more effecient (we can likely sacrifice some generality)
 @dataclass(slots=True)
 class Movement_System:
-	position_type: Position
-	movement_options: list[Action_On_Self]
-	positions_are_close: Callable[[Position, Position], bool]
-	movement_is_valid: Callable[[Position, Action_On_Self, Environment], bool]
+    position_type: Position
+    # TODO: ANDREI: currently movement_options is unused. I like the idea of clearly defining what the movement actions
+    #       are since this can reduce confusion about which movement actions related to which position type. But this is
+    #       likely not the best approach
+    movement_options: list[Action]
+    positions_are_close: Callable[[Position, Position], bool]
 
 
 # ---------------------------------------- Action Definition ----------------------------------------
 
+
 # TODO: would be nice to support actions with additional custom input params. For example, Move_To_Location(location) is
 # 		otherwise awkward to implement.
-# TODO: might be nice to actions return some kinda of value in order to communicate success/failure/info back to env/agent.
-#		For example, if the action is to roll a dice, you need to know what number you rolled.
+# TODO: might be nice if actions return some kinda of value in order to communicate success/failure/info back to env/agent.
+# 		For example, if the action is to roll a dice, you need to know what number you rolled.
 # TODO: implementing Action using a class might not be the nicest approach. It might be nicer to user a dataclass or namedtuple.
-#		Maybe we can replace the Action ABC with a protocol?
+# 		Maybe we can replace the Action ABC with a protocol?
 # TODO: maybe action should have a can_perform_action(actor) method? This might make it nice to check for action validity
+# class Action(ABC):
+#     pass
+
+
+class Action_Validation(ABC):
+    @abstractmethod
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        pass
+
+
+# TODO: would be nice to move action validations to preset file. But that would cause a circular import...
+class Target_Is_Self(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return actor == target_entity
+
+
+class Target_Not_Self(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return actor is not target_entity
+
+
+class Target_Is_Nearby(Action_Validation):
+    def __init__(self, target_is_nearby: Callable[[Entity, Entity, Environment], bool] | None = None):
+        """By the defeault function describing nearby entities is the movement system's positions_are_close function."""
+        self.target_is_nearby = target_is_nearby
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        if self.target_is_nearby:
+            return self.target_is_nearby(actor, target_entity, env)
+        else:
+            return env.movement_system.positions_are_close(actor.position, target_entity.position)
+
+
+class Target_Has_Tag(Action_Validation):
+
+    def __init__(self, target_tags: list[str]):
+        self.target_tags: list[str] = target_tags
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return any(tag in target_entity.tags for tag in self.target_tags)
+
+
+class Target_Doesnt_Have_Tag(Action_Validation):
+
+    def __init__(self, target_tags: list[str]):
+        self.target_tags: list[str] = target_tags
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return any(tag not in target_entity.tags for tag in self.target_tags)
+
+
+class Target_Has_Component(Action_Validation):
+
+    def __init__(self, target_component: type[Component]):
+        self.target_component: type[Component] = target_component
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return target_entity.get_component(self.target_component) is not None
+
+
 class Action(ABC):
-	@staticmethod
-	@abstractmethod
-	def action_description_text(target_entity: Entity) -> str:
-		pass
 
-class Action_On_Other_Entity(ABC):
-	@staticmethod
-	@abstractmethod
-	def __call__(target_entity: Entity, actor: Entity, env: Environment):
-		pass
+    def __init__(self, validation_rules: list[Action_Validation] | None = None):
+        self.validation_rules: list[Action_Validation] = validation_rules or []
 
-class Action_On_Self(ABC):
-	@staticmethod
-	@abstractmethod
-	def __call__(target_entity: Entity, env: Environment):
-		pass
+    @abstractmethod
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+        pass
+
+    # TODO: It might be nice to have action description take as input the env to give more generality. It would require
+    #       storing the env in the Action_Selection which I dont like (or we need to make other changes)
+    @abstractmethod
+    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+        pass
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return all(rule.is_valid(actor, target_entity, env) for rule in self.validation_rules)
+
+
+# TODO: ANDREI: this class is not general enough to support full action flexability, since all actions will have the
+#       same targets. E.g., you won't be able to move and attack or heal yourself and attack.
+#       NOTE: actually, I think are also two types of action composition: parallel actions and sequential actions. And
+#       you can, for example, have a sequence of parallel actions or a parallelization of sequential actions. Parallel
+#       actions execute at the same time and sequential actions execute in sequence. However, in our environment we
+#       distinctly forbid parallel logic, i.e., only a single action may execute at one time. This means that only
+#       sequential actions (action sequences/action chains) exist. For these chains, the question of how to implement
+#       their is_valid method arises. E.g., should is_valid. Continuing discussion in notes...
+# TODO: ANDREI: we could find all possible targets for each non-first action in the chain, but we would require
+#       additional decision steps to choose between them. We could enumerate the full tree of possible action chains to
+#       the agent at the start of the step and have each of these be distinct actions, but the chain could be huge...
+class Action_Chain(Action):
+    def __init__(self, composed_actions: list[Action]):
+        assert len(composed_actions) > 0, "Action_Chain requires at least 1 actions be initialized."
+        self.composed_actions = composed_actions
+
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+        for action in self.composed_actions:
+            if action.is_valid(actor, target_entity, env):
+                action(actor, target_entity, env)
+
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        return self.composed_actions[0].is_valid(actor, target_entity, env)
 
 
 class Action_Selection(NamedTuple):
-	action: Action
-	target_entity: Entity
+    action: Action
+    actor: Entity  # TODO: this is duplicated for all actions associated with an agent. Maybe we can remove it somehow
+    target_entity: Entity
 
-	def __str__(self) -> str:
-		return self.action.action_description_text(self.target_entity)
+    def __str__(self) -> str:
+        return self.action.action_description_text(self.actor, self.target_entity)
+
 
 # ---------------------------------------- Observation Definition ----------------------------------------
 
+
 # TODO: we might want to have this be a subclass of Observation named EntityObservation
-#	in order to perserve the ability for people to create fully customizable and minimal envs
+# 	in order to perserve the ability for people to create fully customizable and minimal envs
 # NOTE: We delibrately exclude a default __str__ method to force env creators to think about it
-#	(We may rethink this decision at some point)
+# 	(We may rethink this decision at some point)
 @dataclass(slots=True)
 class Observation(ABC):
-	possible_actions: list[Action_Selection]
+    possible_actions: list[Action_Selection]
 
-	@abstractmethod
-	def __str__(self):
-		pass
+    @abstractmethod
+    def __str__(self):
+        pass
+
+
+# ---------------------------------------- Component Definition ----------------------------------------
+
+
+class Component:
+    """All Components will inherit from this class."""
+
+    def __init__(
+        self,
+        tags: list[str] | None = None,
+        actions: list[Action] | None = None,
+    ):
+        self.tags: list[str] = tags or []
+        self.actions: list[Action] = actions or []
+
+        # NOTE: This is a reference to the entity which owns this component. It is populated when the Entity is initialized
+        self.entity: Entity | None = None
+
+    def on_instantiation(self, env: Environment, seed: int | None) -> None:
+        """
+        This method is called when the entity is instantiated. E.g., when the environment is first created, before any
+        steps or actions are executed. Or the moment when a different entity instantiates (creates) this entity while
+        the env is running.
+        """
+        pass
+
+    def pre_actions_step(self, env: Environment) -> None:
+        """
+        This method is called before all the agents' actions are executed. It can be overriden to add additional logic
+        to the Entity's step function.
+        """
+        pass
+
+    # TODO: components which do implement a step function still have the empty step function which still gets run each
+    #       step. The compute burden of this is negligible, however, it would still be nice to avoid this
+    def post_actions_step(self, env: Environment) -> None:
+        """
+        This method is called after all the agents' actions are executed. It can be overriden to add additional logic to
+        the Entity's step function.
+        """
+        pass
+
+    def on_destroy(self, env: Environment) -> None:
+        """This method is called when the entity is destory. E.g., when an entity dies."""
+        pass
+
+
+class Take_Action(Component, ABC):
+    """All agents (i.e., entities who can take actions) must contain a component inheriting from this class."""
+
+    @abstractmethod
+    def select_action(self, observation: Observation) -> tuple[Action_Selection, dict]:
+        pass
 
 
 # ---------------------------------------- Entity Definition ----------------------------------------
 
-@dataclass(slots=True)
-class Entity_Properties:
-	'''Entities can inherit from the this class to track more complex properties.'''
-	name: str
 
-@dataclass(slots=True)
-class Entity_State:
-	'''Entities can inherit from the this class to track more complex states.'''
-	position: Position
+class Entity:
 
+    def __init__(
+        self,
+        name: str,
+        position: Position,
+        tags: list[str] | None = None,
+        actions: list[Action] | None = None,
+        components: list[Component] | None = None,
+    ):
+        # Additional information is added to the state using components. The component state can be accessed
+        # using self.get_component(ComponentType)
+        self.name: str = name
+        self.position: Position = position
 
-# TODO: what are the abstract methods? I dont think there are any
-class Entity(ABC):
+        self._init_components(components)
+        self._init_actions(actions)
+        self._init_tags(tags)
+        self.is_agent: bool = self.has_component(Take_Action)
 
-	# TODO: I think a dataclass with some immutable attributes (the actions) would be a good implementation,
-	# however, python does not allow for this. We may still be able to implement this in a nicer way.
-	# Options:
-	#	- create a custom dataclass decorator with field level freezability
-	#	- others?
-	# Issues:
-	#	- exposed_actions type is not enforced
-	#	- init is kinda redundant
-	#	- no real abstract methods, thus poor argument for the need of an ABC
-	# Comments:
-	#	- we don't really need get_all_exposed_action_descriptions() to be in the class def
-	@property
-	@abstractmethod
-	def exposed_actions(self):
-		'''
-		These are all actions which Agents can perform on this Entity.
-		This must be of type: tuple[Action_On_Other_Entity]
-		'''
-		pass
+    def _init_components(self, components: list[Component] | None) -> None:
+        components = components or []
 
-	def __init__(self, state: Entity_State, properties: Entity_Properties) -> None:
-		self.state = state
-		self.properties = properties
+        # We require that each component be of a unique type
+        assert len({type(comp) for comp in components}) == len(components)
+        self.components: dict[type[Component], Component] = {type(comp): comp for comp in components}
 
-	# TODO: if we want this method to be very expressive, we can pass the Environment to it as input
-	#	Might not be great tho, since it makes Entities less environment agnostic
-	@abstractmethod
-	def step(self, env: Environment) -> None:
-		'''
-		This is for logic which happens each step (NOT ACTION SELECTION) and is not handled by Environment.environment_step().
-		If no additional logic is needed this function can do nothing.
-		Examples:
-			- A food entity has a p% chance to rot every step
-			- An entity's thirst property decreases by 1 each step
-			- etc.
-		'''
-		pass
+        for comp in self.components.values():
+            comp.entity = self
 
-	def get_all_exposed_action_descriptions(self):
-		return [action.action_description_text(self) for action in self.exposed_actions]
+    def _init_actions(self, actions: list[Action] | None) -> None:
+        self.actions: list[Action] = actions or []
 
+        for component in self.components.values():
+            self.actions += component.actions
 
-# ---------------------------------------- Agent Definition ----------------------------------------
+    def _init_tags(self, tags: list[str] | None) -> None:
+        self.tags: list[str] = tags or []
 
-# TODO: if we want to support minimal/fully extendible Environments then we should rename this to EntityAgent
-class Agent(Entity):
+        for component in self.components.values():
+            self.tags += component.tags
 
-	@property
-	@abstractmethod
-	def actions_on_self(self):
-		'''This must be of type: tuple[Action_On_Self]'''
-		pass
+    def get_component[T: Component](self, component_type: type[T]) -> T | None:
+        """
+        If multiple components match the specified component type (e.g., in the case where you have two components
+        inheriting from component_type), this method simply returns the first component. Use get_all_components if you
+        want all of the matching components.
+        """
+        valid_components = [comp for comp in self.components.values() if isinstance(comp, component_type)]
+        if len(valid_components) == 0:
+            return None
 
-	# TODO: it might be nice to give the agent access the environment since it is presumable there will be multiple
-	# 		"cheater" agents needed for experiments. And we should likely still be able to trust agent creators????
-	# TODO: maybe we should make a subclass of Agent which cannot access the environment, and this is what agent creators use
-	@abstractmethod
-	def select_action(self, observation: Observation) -> tuple[Action_Selection, dict]:
-		'''
-		Observation contains a list of all possible actions the agent can take.
-		Returns: An Action_Selection and a dictionary of additional information.
-		'''
-		pass
+        return valid_components[0]
 
-	# TODO: maybe the env creator defines the agent class and the agent "creator" only defines the select_action method?
-	# 	This might make it easier to define certain step functions.
-	@abstractmethod
-	def step(self) -> None:
-		'''
-		We override Entity.step() to remove the ability for Agents to pass in the environment as an argument.
-		If an Agent wants to access the environment, it should be done through an Action_On_Self.
-		'''
-		pass
+    def get_component_exact(self, component_type: type[Component]) -> Component | None:
+        if component_type in self.components:
+            return self.components[component_type]
+        return None
+
+    def get_all_components(self, component_type: type[Component]) -> list[Component]:
+        return [comp for comp in self.components.values() if isinstance(comp, component_type)]
+
+    def has_component(self, component_type: type[Component]) -> bool:
+        return any([isinstance(comp, component_type) for comp in self.components.values()])
+
+    def has_component_exact(self, component_type: type[Component]) -> bool:
+        return any([ctype == component_type for ctype in self.components.keys()])
+
+    def on_instantiation(self, env: Environment, seed: int | None) -> None:
+        # NOTE: for Python 3.7+ key insertion ordering is perserved. Hence, components will execute in definition order
+        for component in self.components.values():
+            component.on_instantiation(env, seed)
+
+    def pre_actions_step(self, env: Environment) -> None:
+        # NOTE: for Python 3.7+ key insertion ordering is perserved. Hence, components will execute in definition order
+        for component in self.components.values():
+            component.pre_actions_step(env)
+
+    def post_actions_step(self, env: Environment) -> None:
+        # NOTE: for Python 3.7+ key insertion ordering is perserved. Hence, components will execute in definition order
+        for component in self.components.values():
+            component.post_actions_step(env)
+
+    def on_destroy(self, env: Environment) -> None:
+        # NOTE: for Python 3.7+ key insertion ordering is perserved. Hence, components will execute in definition order
+        for component in self.components.values():
+            component.on_destroy(env)
 
 
 # ---------------------------------------- Environment Definition ----------------------------------------
 
-@dataclass(slots=True)
-class Environment_Properties:
-	'''Environments can inherit from the this class to track more complex properties.'''
-	description: str
 
+# TODO: likely delete this and have it be part of the class attrs. Or at least make the env class initializable without
+#       this class (i.e., you just pass in the args)
 @dataclass(slots=True)
 class Environment_State:
-	'''
-	Environments can inherit from the this class to track more complex states.
-	
-	By default, the order of the entity list defines the order in which their step functions run.
-	However, this can be changed by setting the step_execution_order property when initializing the Environment.
-	'''
-	entities: list[Entity]
+    """
+    Environments can inherit from the this class to track more complex states.
 
+    The order of the entity list defines the order in which their step functions and actions execute.
+    """
 
-# TODO: Is it overkill to have this as an enum or should it just be a string?
-class Step_Execution_Order(Enum):
-	'''This is used to define the order in which the Environment executes Entity steps and actions.'''
-	Entity_Definition_Order = 1	# This is the order in which the entities are defined in the Environment_State
-	Agents_First = 2
-	Agents_Last = 3
+    entities: list[Entity]
 
 
 # TODO: Terminations and truncations are currently unsused.
@@ -201,163 +338,180 @@ class Step_Execution_Order(Enum):
 # 	agents they are controlling. Need to likely scope this better.
 class Environment(ABC):
 
-	# TODO: should add a render_mode optional kwarg
-	def __init__(
-			self,
-			state: Environment_State,
-			properties: Environment_Properties,
-			movement_system: Movement_System,
-			reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
-			step_execution_order: Step_Execution_Order = Step_Execution_Order.Entity_Definition_Order
-		) -> None:
-		'''
-		Assumptions:
-			- New Agents will not be added to the Environment after initialization. (new Entities can still be added)
-		'''
-		self.state = state
-		self.properties = properties
-		self.movement_system = movement_system
-		self.reward_func = reward_func
-		self.step_execution_order = step_execution_order
-		self.reset()
+    # TODO: should add a render_mode optional kwarg
+    def __init__(
+        self,
+        description: str,
+        state: Environment_State,
+        movement_system: Movement_System,
+        # TODO: I could default the reward_func to the no_reward func
+        reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
+    ) -> None:
+        """
+        Assumptions:
+                - New agents will not be added to the Environment after initialization. (new Entities can still be added)
+        """
+        self.description = description
+        self.state = state
+        self.movement_system = movement_system
+        self.reward_func = reward_func
+        self.reset()
 
-	@abstractmethod
-	def observe(self, agent_id: int) -> Observation:
-		pass
+    @abstractmethod
+    def observe(self, agent_id: int) -> Observation:
+        pass
 
-	# TODO: clarify the responsability of this function (maybe rename it)
-	#	currently, I think this function should handle extra random things that happen in the env outside of action interactions
-	@abstractmethod
-	def environment_start_of_step(self, action_selections: list[Action_Selection]):
-		"""
-		This is where you define environment instance specific things you want happening happening at the start of each step.
-		Example:
-			- you want to have countdown timer
-			- you want your environment to switch between day and night
-			- you want to have random events occurs with some probability each day
-			- etc.
-		"""
-		pass
-	
-	@abstractmethod
-	def environment_end_of_step(self, action_selections: list[Action_Selection]):
-		"""
-		This is where you define environment instance specific things you want happening happening at the end of each step.
-		Example:
-			- you want to have countdown timer
-			- you want your environment to switch between day and night
-			- you want to have random events occurs with some probability each day
-			- etc.
-		"""
-		pass
-	
-	@abstractmethod
-	def _reset(self, seed=None) -> None:
-		'''This method is used by the reset() method to reset environment specific state.'''
-		pass
+    # TODO: clarify the responsability of this function (maybe rename it)
+    # 	currently, I think this function should handle extra random things that happen in the env outside of action interactions
+    @abstractmethod
+    def environment_start_of_step(self, action_selections: list[Action_Selection]) -> None:
+        """
+        This is where you define environment instance specific things you want happening happening at the start of each step.
+        Example:
+                - you want to have countdown timer
+                - you want your environment to switch between day and night
+                - you want to have random events occurs with some probability each day
+                - etc.
+        """
+        pass
 
-	def render(self) -> None:
-		'''This is for visualizing the environment. It is not required to be implemented.'''
-		raise NotImplementedError('This environment does not support rendering.')
-	
+    @abstractmethod
+    def environment_end_of_step(self, action_selections: list[Action_Selection]) -> None:
+        """
+        This is where you define environment instance specific things you want happening happening at the end of each step.
+        Example:
+                - you want to have countdown timer
+                - you want your environment to switch between day and night
+                - you want to have random events occurs with some probability each day
+                - etc.
+        """
+        pass
 
-	def reset(self, seed=None) -> None:
-		self._reset(seed=seed)
-		self._init_agent_list()
-		self._init_agent_idx_dict()
-		self._add_movement_options_to_agents()
-		self._rearrage_entities_to_match_step_execution_order()
-		self.last_rewards = [None] * len(self.agents)
-		self.terminations = [False] * len(self.agents)
-		self.truncations = [False] * len(self.agents)
-		self.infos = [{} for _ in self.agents]
+    @abstractmethod
+    def _reset(self, seed=None) -> None:
+        """This method is used by the reset() method to reset environment specific state."""
+        pass
 
+    def render(self) -> None:
+        """This is for visualizing the environment. It is not required to be implemented."""
+        raise NotImplementedError("This environment does not support rendering.")
 
-	def _init_agent_list(self):
-		self.agents = [entity for entity in self.state.entities if isinstance(entity, Agent)]
+    def reset(self, seed=None) -> None:
+        self.cur_episode_seed = seed
+        self._reset(seed=seed)
+        self._init_agent_list()
+        self._init_agent_idx_dict()
+        self.last_rewards = [None] * len(self.agents)
+        self.terminations = [False] * len(self.agents)
+        self.truncations = [False] * len(self.agents)
+        self.infos = [{} for _ in self.agents]
 
+        # We iterate over a copy since an entity may instantiate another entity during its on_instantiation. If that
+        # happens then not using a copy results in the new entity's on_instantiation method being called twice
+        for entity in self.state.entities.copy():
+            entity.on_instantiation(env=self, seed=seed)
 
-	def _init_agent_idx_dict(self):
-		self.agent_to_idx = {agent: i for i, agent in enumerate(self.agents)}
+    def _init_agent_list(self) -> None:
+        # Note that this does not duplicate the agent entities. We are simply storing references to the agent objects
+        self.agents: list[Entity] = [entity for entity in self.state.entities if entity.is_agent]
 
+    def _init_agent_idx_dict(self) -> None:
+        self.agent_to_idx = {agent: i for i, agent in enumerate(self.agents)}
 
-	# TODO: we are currently not preventing the addition of duplicate actions
-	def _add_movement_options_to_agents(self):
-		for agent in self.agents:
-			agent.actions_on_self += self.movement_system.movement_options
+    def _perform_action(self, action_selection: Action_Selection) -> None:
+        assert action_selection.action.is_valid(action_selection.actor, action_selection.target_entity, self)
+        action_selection.action(action_selection.actor, action_selection.target_entity, self)
 
+    def step(self, action_selections: list[Action_Selection]) -> None:
+        self.environment_start_of_step(action_selections)
 
-	def _rearrage_entities_to_match_step_execution_order(self):
-		if self.step_execution_order == Step_Execution_Order.Entity_Definition_Order:
-			pass
-		elif self.step_execution_order == Step_Execution_Order.Agents_First:
-			non_agents = [entity for entity in self.state.entities if not isinstance(entity, Agent)]
-			self.state.entities = self.agents + non_agents
-		elif self.step_execution_order == Step_Execution_Order.Agents_Last:
-			non_agents = [entity for entity in self.state.entities if not isinstance(entity, Agent)]
-			self.state.entities = non_agents + self.agents
-		else:
-			raise ValueError(f'Invalid step_execution_order: {self.step_execution_order}')
+        for entity in self.state.entities:
+            entity.pre_actions_step(env=self)
 
+        for action_selection in action_selections:
+            self._perform_action(action_selection)
 
-	# TODO: this is a temp implementation which says all actions are valid
-	# TODO: we can likely implement this using abstract methods, we don't need to require the env creator to create it
-	#	(will likely be done by giving each action a list of validity requirements)
-	# TODO: I think a proper implementation of this function would also use Movement_System.movement_is_valid
-	def action_selection_is_valid(self, actor, action_selection) -> bool:
-		return True
+        for entity in self.state.entities:
+            entity.post_actions_step(env=self)
 
+        self.environment_end_of_step(action_selections)
+        self.last_rewards = self.reward_func(action_selections, self)
 
-	def _perform_action(self, agent, action_selection: Action_Selection):
-		assert self.action_selection_is_valid(agent, action_selection)
-		if isinstance(action_selection.action, Action_On_Self):
-			action_selection.action(agent, self)
-		elif isinstance(action_selection.action, Action_On_Other_Entity):
-			action_selection.action(action_selection.target_entity, agent, self)
-		else:
-			raise ValueError(f'Invalid Action class received: {action_selection.action}')
+    def last(self, agent_id: int) -> tuple[Observation, float, bool, bool, dict]:
+        """
+        Returns:
+        - observation
+        - instantaneous reward
+        - terminatation status
+                has the agent reached a terminal state in the MDP?
+        - truncatation status
+                has the episode ended due to a reason outside of the scope of the MDP (ex., time limit)?
+        - info
 
+        for the current agent.
+        """
+        return (
+            self.observe(agent_id),
+            self.last_rewards[agent_id],
+            self.terminations[agent_id],
+            self.truncations[agent_id],
+            self.infos[agent_id],
+        )
 
-	def step(self, action_selections: list[Action_Selection]) -> None:
-		self.environment_start_of_step(action_selections)
-		
-		action_selection_iter = iter(action_selections)
-		for entity in self.state.entities:
-			if isinstance(entity, Agent):
-				self._perform_action(entity, next(action_selection_iter))
-				# To prevent cheating Agents do not have access to the environment in their step function
-				entity.step()
-			else:
-				entity.step(env=self)
+    def entities_near_position(self, position: Position) -> list[Entity]:
+        return [
+            entity
+            for entity in self.state.entities
+            if self.movement_system.positions_are_close(position, entity.position)
+        ]
 
-		self.environment_end_of_step(action_selections)
-		self.last_rewards = self.reward_func(action_selections, self)
-	
-	
-	def last(self, agent_id: int) -> tuple[Observation, float, bool, bool, dict]:
-		'''
-		Returns:
-		- observation
-		- instantaneous reward
-		- terminatation status
-			has the agent reached a terminal state in the MDP?
-		- truncatation status
-			has the episode ended due to a reason outside of the scope of the MDP (ex., time limit)?
-		- info
-		
-		for the current agent.
-		'''
-		return self.observe(agent_id), self.last_rewards[agent_id], self.terminations[agent_id], self.truncations[agent_id], self.infos[agent_id]
+    def possible_actions(self, agent_id: int) -> list[Action_Selection]:
+        agent = self.agents[agent_id]
+        nearby_entities = [entity for entity in self.entities_near_position(agent.position)]
 
+        possible_actions = []
 
-	def get_entities_near_position(self, position: Position) -> list[Entity]:
-		return [entity for entity in self.state.entities if self.movement_system.positions_are_close(position, entity.state.position)]
+        for action in agent.actions:
+            if any(isinstance(rule, Target_Is_Self) for rule in action.validation_rules):
+                possible_targets = [agent]
+            elif any(isinstance(rule, Target_Is_Nearby) for rule in action.validation_rules):
+                possible_targets = nearby_entities.copy()
+            else:
+                possible_targets = self.state.entities
 
+            if any(isinstance(rule, Target_Not_Self) for rule in action.validation_rules):
+                possible_targets.remove(agent)
 
-	def get_possible_actions(self, agent_id: int) -> list[Action_Selection]:
-		agent = self.agents[agent_id]
-		nearby_entities = [entity for entity in self.get_entities_near_position(agent.state.position) if entity is not agent]
-		possible_actions = [Action_Selection(action=action, target_entity=agent) for action in agent.actions_on_self]
-		for entity in nearby_entities:
-			possible_actions += [Action_Selection(action=action, target_entity=entity) for action in entity.exposed_actions]
-		return possible_actions
+            possible_actions += [
+                Action_Selection(action, agent, target)
+                for target in possible_targets
+                if action.is_valid(agent, target, self)
+            ]
+
+        return possible_actions
+
+    # TODO: perhaps I should think about when I want new entities to be initialized. E.g., only at the end of the
+    #       current step or only at the start of the next step.
+    def instantiate_entity(self, entity: Entity, entity_order_position: int | None = None):
+        """
+        entity_order_position defined the position within the entity list that the new entity is added. This order
+        defines the execution order of actions and steps. By default we add new entity to the end of the list.
+        """
+        if entity.is_agent:
+            raise ValueError("All agents must be added when the environment is initialized.")
+
+        if entity_order_position:
+            self.state.entities.insert(entity_order_position, entity)
+        else:
+            self.state.entities.append(entity)
+
+        entity.on_instantiation(env=self, seed=self.cur_episode_seed)
+
+    def destroy_entity(self, entity: Entity):
+        entity.on_destroy(env=self)
+
+        self.state.entities.remove(entity)
+        if entity.is_agent:
+            self.terminations[self.agent_to_idx[entity]] = True
+            self.agents.remove(entity)
+            del self.agent_to_idx[entity]

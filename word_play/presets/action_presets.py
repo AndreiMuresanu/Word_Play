@@ -1,16 +1,15 @@
-from word_play.environment import Action_On_Self, Entity
+from word_play.environment import Action, Target_Is_Self, Entity, Environment
 
 
-class Do_Nothing(Action_On_Self):
+class Do_Nothing(Action):
+    def __init__(self):
+        super().__init__(validation_rules=[Target_Is_Self()])
 
-	@staticmethod
-	def action_description_text(target_entity: Entity) -> str:
-		return f'Do nothing.'
-	
-	@staticmethod
-	def __call__(target_entity, env):
-		return 'You did nothing.'
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+        pass
 
+    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+        return "Do nothing."
 
 
 # # TODO: this is just a temp example
