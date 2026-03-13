@@ -1,7 +1,6 @@
 from word_play.environment import (
     Position,
     Environment,
-    Environment_State,
     Entity,
     Component,
     Agent_Policy,
@@ -125,16 +124,40 @@ Possible Action:{format_possible_actions(self.possible_actions)}
 """
 
 
-class Simple_Grid_World(Environment):
+# TODO: ANDREI: make Simple_2D_Grid_World inherit from Simple_Reset_Environment
+class Simple_Reset_Environment(Environment):
+
+    def __init__(
+        self,
+        state: Environment_State,
+        properties: Environment_Properties,
+        movement_system: Movement_System,
+        reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
+        step_execution_order: Step_Execution_Order = None,
+    ) -> None:
+        self.initial_state = copy.deepcopy(state)
+        init_kwargs = {}
+        if step_execution_order is not None:
+            init_kwargs["step_execution_order"] = step_execution_order
+        super().__init__(
+            state=state, properties=properties, movement_system=movement_system, reward_func=reward_func, **init_kwargs
+        )
+
+    def _reset(self, seed=None) -> None:
+        self.state = copy.deepcopy(self.initial_state)
+
+
+# TODO: ANDREI: make this a nice preset, e.g., have the reward_func=zero_reward_func be a default not a fixed thing
+class Simple_2D_Grid_World(Environment):
     def __init__(
         self,
         description: str,
-        state: Environment_State,
+        entities: list[Entity],
         entity_order: Callable[[list[Entity], Environment], list[int]] = entity_definition_order,
     ):
         super().__init__(
             description,
-            state,
+            entities,
             movement_system=INFINITE_2D_MOVEMENT_SYSTEM,
             reward_func=zero_reward_func,
             entity_order=entity_order,
@@ -655,117 +678,113 @@ class Start_Private_Conversation(Action):
 def run_exp():
     exp_steps = 1000
 
-    env = Simple_Grid_World(
+    env = Simple_2D_Grid_World(
         description="The forbidden forest.",
-        state=Environment_State(
-            entities=[
-                Entity(
-                    name="Iskandar",
-                    position=Position_2D(0, 0),
-                    actions=[
-                        Test_Action(),
-                        Do_Nothing(),
-                        Move_Up(),
-                        Move_Down(),
-                        Move_Left(),
-                        Move_Right(),
-                        Attack(name="Zap", damage_amount=1),
-                        Start_Public_Conversation(),
-                        Start_Private_Conversation(),
-                    ],
-                    components=[
-                        Human_Takes_Action(),
-                        Inventory(
-                            collectable_tags=["item"],
-                            inventory_size=2,
-                            starting_inventory=[
-                                Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])
-                            ],
-                        ),
-                        Health(max_health=5, starting_health=3),
-                        Collidable(collidable_tags=["wall"]),
-                        Human_Communication_Policy(),
-                    ],
-                ),
-                # Entity(
-                #     name="Andrei",
-                #     position=Position_2D(0, 0),
-                #     actions=[
-                #         Do_Nothing(),
-                #         Move_Up(),
-                #         Move_Down(),
-                #         Move_Left(),
-                #         Move_Right(),
-                #         Attack(name="Zap", damage_amount=1),
-                #     ],
-                #     components=[
-                #         Human_Takes_Action(),
-                #         Inventory(
-                #             collectable_tags=["item"],
-                #             inventory_size=2,
-                #             starting_inventory=[
-                #                 Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])
-                #             ],
-                #         ),
-                #         Health(max_health=5, starting_health=3),
-                #         Collidable(collidable_tags=["wall"]),
-                #     ],
-                # ),
-                Entity(name="Blue Flower", position=Position_2D(0, 1), tags=["item"]),
-                Entity(
-                    name="Barrel",
-                    position=Position_2D(0, 0),
-                    tags=["item"],
-                    components=[Health(max_health=1, starting_health=1)],
-                ),
-                Entity(
-                    name="Barrel",
-                    position=Position_2D(0, 1),
-                    tags=["item"],
-                    components=[Health(max_health=1, starting_health=1)],
-                ),
-                Entity(
-                    name="Cow",
-                    position=Position_2D(1, 0),
-                    actions=[Move_Up(), Move_Down()],
-                    components=[
-                        Health(max_health=5, starting_health=5),
-                        Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Fat Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=10, starting_health=10),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Tiny Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=1, starting_health=1),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Wall",
-                    position=Position_2D(-1, 0),
-                    tags=["wall"],
-                    components=[Collidable()],
-                ),
-                # TODO: for a real pike entity, you likely want an Attack_All_Nearby_Entities action instead of Attack
-                Entity(
-                    name="Spike",
-                    position=Position_2D(0, -2),
-                    actions=[Attack(name="Poke", damage_amount=1)],
-                    tags=["item"],
-                    components=[Follow_Action_Sequence([(Attack, None)])],
-                ),
-            ]
-        ),
+        entities=[
+            Entity(
+                name="Iskandar",
+                position=Position_2D(0, 0),
+                actions=[
+                    Test_Action(),
+                    Do_Nothing(),
+                    Move_Up(),
+                    Move_Down(),
+                    Move_Left(),
+                    Move_Right(),
+                    Attack(name="Zap", damage_amount=1),
+                    Start_Public_Conversation(),
+                    Start_Private_Conversation(),
+                ],
+                components=[
+                    Human_Takes_Action(),
+                    Inventory(
+                        collectable_tags=["item"],
+                        inventory_size=2,
+                        starting_inventory=[Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])],
+                    ),
+                    Health(max_health=5, starting_health=3),
+                    Collidable(collidable_tags=["wall"]),
+                    Human_Communication_Policy(),
+                ],
+            ),
+            # Entity(
+            #     name="Andrei",
+            #     position=Position_2D(0, 0),
+            #     actions=[
+            #         Do_Nothing(),
+            #         Move_Up(),
+            #         Move_Down(),
+            #         Move_Left(),
+            #         Move_Right(),
+            #         Attack(name="Zap", damage_amount=1),
+            #     ],
+            #     components=[
+            #         Human_Takes_Action(),
+            #         Inventory(
+            #             collectable_tags=["item"],
+            #             inventory_size=2,
+            #             starting_inventory=[
+            #                 Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])
+            #             ],
+            #         ),
+            #         Health(max_health=5, starting_health=3),
+            #         Collidable(collidable_tags=["wall"]),
+            #     ],
+            # ),
+            Entity(name="Blue Flower", position=Position_2D(0, 1), tags=["item"]),
+            Entity(
+                name="Barrel",
+                position=Position_2D(0, 0),
+                tags=["item"],
+                components=[Health(max_health=1, starting_health=1)],
+            ),
+            Entity(
+                name="Barrel",
+                position=Position_2D(0, 1),
+                tags=["item"],
+                components=[Health(max_health=1, starting_health=1)],
+            ),
+            Entity(
+                name="Cow",
+                position=Position_2D(1, 0),
+                actions=[Move_Up(), Move_Down()],
+                components=[
+                    Health(max_health=5, starting_health=5),
+                    Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Tiny Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=1, starting_health=1),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Wall",
+                position=Position_2D(-1, 0),
+                tags=["wall"],
+                components=[Collidable()],
+            ),
+            # TODO: for a real pike entity, you likely want an Attack_All_Nearby_Entities action instead of Attack
+            Entity(
+                name="Spike",
+                position=Position_2D(0, -2),
+                actions=[Attack(name="Poke", damage_amount=1)],
+                tags=["item"],
+                components=[Follow_Action_Sequence([(Attack, None)])],
+            ),
+        ],
         entity_order=entity_definition_order,
     )
 

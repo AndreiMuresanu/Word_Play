@@ -809,8 +809,6 @@ def randomize_agent_order(entities: list[Entity], env: Environment) -> list[int]
     return [next(new_agent_order_iter) if entity.is_agent else entity_idx for entity_idx, entity in enumerate(entities)]
 
 
-# TODO: likely delete this and have it be part of the class attrs. Or at least make the env class initializable without
-#       this class (i.e., you just pass in the args)
 @dataclass(slots=True)
 class Environment_State:
     """
@@ -849,7 +847,7 @@ class Environment(ABC):
     def __init__(
         self,
         description: str,
-        state: Environment_State,
+        entities: list[Entity],
         movement_system: Movement_System,
         # TODO: I could default the reward_func to the no_reward func
         reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
@@ -865,7 +863,7 @@ class Environment(ABC):
               reordering rules. E.g., reordering based on an entity's initiative stat.
         """
         self.description = description
-        self.state = state
+        self.state = Environment_State(entities)
         self.movement_system = movement_system
         self.reward_func = reward_func
         self.entity_order = entity_order
