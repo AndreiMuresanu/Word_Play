@@ -6,8 +6,12 @@
 - [x] update description text methods and call method in movement system presets file
 
 
+- [ ] create a random action comp. This should be a preset. I.e., random choice of actions from a list where we are also given a random prob for each action. Default to uniform prob. Can have two options, one randomly selects from possible_actions and one which selects from a predefined set of actions and only considers the possible ones when making its choice
+- [x] what to do if the agent has no actions available? Maybe the env creator should never let this happen? E.g., they should always provide the Do_Nothing() action if such a situation can arise, since the only other reasonable default is to have the agent Do_Nothing if no actions are available. Hence, it is better to just have the env creator explicitly think about this. And make the choice.
+
 - [ ] if two agents select: the pick up item action for the same item, only 1 agent will be able to pick up the item. Thus, actions can fail. How do we deal with this? Our env is very sequential, maybe we break the standard RL paradigm of selecting all actions at the same time and simulate the environment change after each action is executed. E.g., agent_1_observe(), agent_1_select_action(), sim_agent_1_action(), agent_2_observe(), agent_2_select_action(), sim_agent_2_action(), ...
 	- relatedly, if 2 agents start different chats at the same time
+	- *** create a preset conflict resolution component
 
 - [ ] how should entities have the ability to take actions? Or at least re-use that functionality.
 	- I think having entities take actions is important since it would be really a great re-use of already created logic. E.g., imagine a cow which wanders around. If it does not use the movement actions, then we (or more likely the user) would need to reimplement the entire movement and collision system. This seems wrong. Same with entites which attack you (they would need to reimplement the entire attack and health system)
@@ -28,10 +32,14 @@
 	- E.g., there are two options for implementing is_valid:
 		- is_valid only returns the validity of the first action in the chain and the rema
 		- is_valid is computed for the entire chain at the start by simulating the environment (this might actually not be possible since the validity also depends on the actions of the previous entities)
+	- **** I think entities should have the ability to take actions. I think the non-agent AI system (e.g., NPC AI) provides a strong use-case for allowing entities to take actions. The only question which remains is (1) should entities also abide to the AEC 
 
 - *** you can't do prisoner's dilemma using AEC. It requires parallel env
 
 - [\] idk if AOE attacks are possible with the current system/without observer pattern. Actually i think it's possible by instantiating eg fire entites which deal damage. This might actually be nicer
+
+- [ ] add example of Action_Arg where the int range of pickable berries is based on the number of berries available in a bush. Maybe a better example, would be a Give_Money action where the max amount of money you can give is determined by the max amount of money you have
+- [ ] create an example with the Dynamic_Choice_Arg where the choices are determined by nearby objects or objects in your inventory or something
 
 - [ ] create some test systems I'd like to turn into nice presets:
 	- [x] inventory system
@@ -73,6 +81,8 @@ def __call__(actor, target_entity, env):
 - [ ] we could add a nice default reset functionality for envs. E.g., add a resettable comp to the entities (or perhaps to the env is better??) which just creates a deepcopy of the initial state and then reverts to that when reset() is called
 
 - [ ] (maybe--need to think exactly how to set this up) make observation show a couple tiles in around you rather than just your current tile (e.g., so you know you can't move onto a tile because there is a wall)
+
+- [ ] an state machine based non-agent entity policy component would be nice
 
 - [ ] createa a test suite. E.g., E2E tests where we create an env with a bunch of systems and then take a bunch of actions and check that the final state is as expected
 
@@ -190,3 +200,31 @@ Old ideas:
 # #       A default reset functionality would be nice
 # class Env_Component:
 #     pass
+
+
+
+# *************
+# TODO: ANDREI: need to think very deeply about this class. Using pre_actions_step avoid conflict with the Health comp,
+#       but maybe some comps need actions to run after their step func. We would also likely need to refactor the
+#       Environment.possible_actions method to take as input an entity rather than agent_id. We can have a
+#       wrapper/helper which takes agent_id.
+#       The biggest thing to think about tho is whether we want Entities to have actions. If so, then there ought to be
+#       a standard way for the actions to run. Otherwise, this method is likely not the best. Maybe entities should have
+#       actions. Imagine games where we want entities with simple AI. Thus, perhaps non-agent entities should be allowed
+#       to add a Take_Action component which they can use to select actions. Or maybe if actions become standard,
+#       select_action should just be a standard method of the component class or something else??
+#       Maybe the best approach is to create some kinda of component like Non_Agent_Execute_Actions?
+# class Apply_Actions_Whenever_Possible(Component):
+#     """
+#     This component can be attached to non-agent entites to allow them to apply actions anytime it is possible to apply
+#     the action. E.g., a spike can apply a damage/attack action to all entities on it.
+
+#     Note that this behaviour (e.g., the spike damange behaviour) can also be directly added to a spike component step
+#     function which damages all entities on top of it.
+#     """
+
+#     def __init__(self, actions: list[Action]):
+#         super().__init__(actions=actions)
+
+#     def pre_actions_step(self, env: Environment) -> None:
+#         for action in

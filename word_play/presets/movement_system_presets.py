@@ -82,6 +82,7 @@ def check_for_collision_at_position(target_position: Position, actor: Entity, en
     return True
 
 
+# TODO: might be nice to make a nice general version of this class
 class No_Collision_Will_Occur(Action_Validation):
     """
     IMPORTANT: this class assumes that movement_action.__call__() causes no mutation of the environment (other than the
@@ -90,6 +91,8 @@ class No_Collision_Will_Occur(Action_Validation):
 
     IMPORTANT: this class create a deepcopy of the actor. If your actor stores large amounts of data (e.g., an LLM) this
     will be very inefficient and may cause out-of-memory errors.
+
+    IMPORTANT: this class assumes the action has no kwargs.
     """
 
     def __init__(self, movement_action: Action):
@@ -99,7 +102,7 @@ class No_Collision_Will_Occur(Action_Validation):
         if not actor.has_component(Collidable):
             return True
         hypothetical_actor = deepcopy(actor)
-        self.movement_action(hypothetical_actor, target_entity, env)
+        self.movement_action(hypothetical_actor, target_entity, env, None)
         return check_for_collision_at_position(hypothetical_actor.position, actor, env)
 
 
@@ -143,10 +146,10 @@ class Move_Left(Action):
     def __init__(self):
         super().__init__(validation_rules=[Target_Is_Self(), No_Collision_Will_Occur_Left()])
 
-    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         actor.position.x -= 1
 
-    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return "Move left."
 
 
@@ -154,10 +157,10 @@ class Move_Right(Action):
     def __init__(self):
         super().__init__(validation_rules=[Target_Is_Self(), No_Collision_Will_Occur_Right()])
 
-    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         actor.position.x += 1
 
-    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return "Move right."
 
 
@@ -165,10 +168,10 @@ class Move_Up(Action):
     def __init__(self):
         super().__init__(validation_rules=[Target_Is_Self(), No_Collision_Will_Occur_Up()])
 
-    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         actor.position.y += 1
 
-    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return "Move up."
 
 
@@ -176,10 +179,10 @@ class Move_Down(Action):
     def __init__(self):
         super().__init__(validation_rules=[Target_Is_Self(), No_Collision_Will_Occur_Down()])
 
-    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         actor.position.y -= 1
 
-    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return "Move down."
 
 
