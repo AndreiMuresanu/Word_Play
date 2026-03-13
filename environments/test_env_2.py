@@ -234,6 +234,11 @@ class Room_In_Inventory(Action_Validation):
             return True
         return len(inventory_comp.inventory) < inventory_comp.inventory_size
 
+class Target_Health_Not_Max(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        health_comp = target_entity.get_component(Health)
+        return health_comp is not None and health_comp.health < health_comp.max_health
+
 
 class Target_Health_Not_Max(Action_Validation):
     def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
