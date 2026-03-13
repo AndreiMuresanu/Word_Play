@@ -235,6 +235,12 @@ class Room_In_Inventory(Action_Validation):
         return len(inventory_comp.inventory) < inventory_comp.inventory_size
 
 
+class Target_Health_Not_Max(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        health_comp = target_entity.get_component(Health)
+        return health_comp is not None and health_comp.health < health_comp.max_health
+
+
 class Pick_Up_Item(Action):
     def __init__(
         self, collectable_tags: list[str], item_is_nearby: Callable[[Entity, Entity, Environment], bool] | None = None
@@ -417,7 +423,34 @@ class Lock_Door(Action):
 # TODO: think about how to chain/compose this action with, E.g., an Eat action. Eat action ought to be able to have any
 #       other effect associated
 class Heal(Action):
-    pass
+    def __init__(
+        self,
+        name: str,
+        heal_amount: float,
+        untargetable_tags: list[str] | None = None,
+        target_is_nearby: Callable[[Entity, Entity, Environment], bool] | None = None,
+    ):
+        untargetable_tags = untargetable_tags or []
+        untargetable_tags.append("in_inventory")
+
+        super().__init__(
+            validation_rules=[
+                Target_Has_Component(Health),
+                Target_Health_Not_Max(),
+                Target_Is_Nearby(target_is_nearby),
+                Target_Doesnt_Have_Tag(untargetable_tags),
+            ]
+        )
+
+        self.name: str = name
+        self.heal_amount: float = heal_amount
+
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+        target_health = target_entity.get_component(Health)
+        target_health.health = min(target_health.max_health, target_health.health + self.heal_amount)
+
+    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+        return f"{self.name} {target_entity.name}"
 
 
 class Attack(Action):
@@ -765,6 +798,7 @@ def run_exp():
                         Move_Right(),
                         Unlock_Door(),
                         Lock_Door(),
+                        Heal(name="Heal", heal_amount=2),
                         Attack(name="Zap", damage_amount=1),
                         Start_Public_Conversation(),
                         Start_Private_Conversation(),
@@ -834,28 +868,7 @@ def run_exp():
                 Entity(
                     name="Cow",
                     position=Position_2D(1, 0),
-                    actions=[Move_Up(), Move_Down()],
-                    components=[
-                        Health(max_health=5, starting_health=5),
-                        Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Fat Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=10, starting_health=10),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Tiny Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=1, starting_health=1),
-                        TalkingCow(),
-                    ],
+                    components=[Health(max_health=5, starting_health=2)],
                 ),
                 Entity(
                     name="Wall",
