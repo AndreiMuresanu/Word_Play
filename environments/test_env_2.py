@@ -319,6 +319,100 @@ class Inventory(Component):
         self.inventory = []
 
 
+class Key(Component):
+    def __init__(self, key_name: str):
+        super().__init__()
+        self.key_name = key_name
+
+
+class Door(Component):
+    def __init__(self, key_name: str, locked: bool = True, collision_tag: str = "wall"):
+        super().__init__()
+        self.key_name = key_name
+        self.locked = locked
+        self.collision_tag = collision_tag
+
+    def on_instantiation(self, env: Environment, seed: int | None) -> None:
+        if self.locked and self.collision_tag not in self.entity.tags:
+            self.entity.tags.append(self.collision_tag)
+        elif not self.locked and self.collision_tag in self.entity.tags:
+            self.entity.tags.remove(self.collision_tag)
+
+
+class Target_Is_Locked_Door(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        door_comp = target_entity.get_component(Door)
+        return door_comp is not None and door_comp.locked
+
+
+class Target_Is_Unlocked_Door(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        door_comp = target_entity.get_component(Door)
+        return door_comp is not None and not door_comp.locked
+
+
+class Actor_Has_Key_For_Door(Action_Validation):
+    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+        inventory_comp = actor.get_component(Inventory)
+        door_comp = target_entity.get_component(Door)
+
+        if inventory_comp is None or door_comp is None:
+            return False
+
+        return any(
+            item.has_component(Key) and item.get_component(Key).key_name == door_comp.key_name
+            for item in inventory_comp.inventory
+        )
+
+
+class Unlock_Door(Action):
+    def __init__(self, target_is_nearby: Callable[[Entity, Entity, Environment], bool] | None = None):
+        super().__init__(
+            validation_rules=[
+                Target_Not_Self(),
+                Target_Has_Component(Door),
+                Target_Is_Locked_Door(),
+                Actor_Has_Key_For_Door(),
+                Target_Is_Nearby(target_is_nearby),
+            ]
+        )
+
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
+        door_comp = target_entity.get_component(Door)
+        door_comp.locked = False
+        if door_comp.collision_tag in target_entity.tags:
+            target_entity.tags.remove(door_comp.collision_tag)
+
+        return {"unlocked_door": target_entity.name, "key_name": door_comp.key_name}
+
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
+        return f"Unlock {target_entity.name}."
+
+
+class Lock_Door(Action):
+    def __init__(self, target_is_nearby: Callable[[Entity, Entity, Environment], bool] | None = None):
+        super().__init__(
+            validation_rules=[
+                Target_Not_Self(),
+                Target_Has_Component(Door),
+                Target_Is_Unlocked_Door(),
+                Actor_Has_Key_For_Door(),
+                Target_Is_Nearby(target_is_nearby),
+            ]
+        )
+
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
+        door_comp = target_entity.get_component(Door)
+        door_comp.locked = True
+        if door_comp.collision_tag not in target_entity.tags:
+            target_entity.tags.append(door_comp.collision_tag)
+
+        return {"locked_door": target_entity.name, "key_name": door_comp.key_name}
+
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
+        return f"Lock {target_entity.name}."
+
+
 # TODO: complete class. Heal should be able to heal both self and other entities (just don't add the associated validation rules)
 # TODO: think about how to chain/compose this action with, E.g., an Eat action. Eat action ought to be able to have any
 #       other effect associated
@@ -669,6 +763,8 @@ def run_exp():
                         Move_Down(),
                         Move_Left(),
                         Move_Right(),
+                        Unlock_Door(),
+                        Lock_Door(),
                         Attack(name="Zap", damage_amount=1),
                         Start_Public_Conversation(),
                         Start_Private_Conversation(),
@@ -686,6 +782,17 @@ def run_exp():
                         Collidable(collidable_tags=["wall"]),
                         Human_Communication_Policy(),
                     ],
+                ),
+                Entity(
+                    name="Copper Key",
+                    position=Position_2D(0, 0),
+                    tags=["item"],
+                    components=[Key(key_name="copper")],
+                ),
+                Entity(
+                    name="Copper Door",
+                    position=Position_2D(0, 0),
+                    components=[Door(key_name="copper"), Collidable()],
                 ),
                 # Entity(
                 #     name="Andrei",
