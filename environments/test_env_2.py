@@ -108,13 +108,11 @@ class Simple_Observation(Observation):
         else:
             if self.info["action_info"]:
                 extra_action_info_text = (
-                    f"\nSome additional information about your action: "
-                    f"{pprint.pformat(self.info['action_info'])}"
+                    f"\nSome additional information about your action: {pprint.pformat(self.info["action_info"])}"
                 )
             else:
                 extra_action_info_text = ""
-            action_result_text = "was successful." if self.info["action_success"] else "unsuccessful."
-            previous_action_info = f"Your last action {action_result_text}{extra_action_info_text}\n\n"
+            previous_action_info = f"Your last action {"was successful." if self.info["action_success"] else "unsuccessful."}{extra_action_info_text}\n\n"
 
         return f"""{previous_action_info}Your reward last turn was {self.last_reward}.
 
