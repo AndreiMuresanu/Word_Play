@@ -108,11 +108,13 @@ class Simple_Observation(Observation):
         else:
             if self.info["action_info"]:
                 extra_action_info_text = (
-                    f"\nSome additional information about your action: {pprint.pformat(self.info["action_info"])}"
+                    f"\nSome additional information about your action: "
+                    f"{pprint.pformat(self.info['action_info'])}"
                 )
             else:
                 extra_action_info_text = ""
-            previous_action_info = f"Your last action {"was successful." if self.info["action_success"] else "unsuccessful."}{extra_action_info_text}\n\n"
+            action_result_text = "was successful." if self.info["action_success"] else "unsuccessful."
+            previous_action_info = f"Your last action {action_result_text}{extra_action_info_text}\n\n"
 
         return f"""{previous_action_info}Your reward last turn was {self.last_reward}.
 
@@ -233,11 +235,6 @@ class Room_In_Inventory(Action_Validation):
         if inventory_comp.inventory_size < 0:
             return True
         return len(inventory_comp.inventory) < inventory_comp.inventory_size
-
-class Target_Health_Not_Max(Action_Validation):
-    def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
-        health_comp = target_entity.get_component(Health)
-        return health_comp is not None and health_comp.health < health_comp.max_health
 
 
 class Target_Health_Not_Max(Action_Validation):
@@ -450,11 +447,11 @@ class Heal(Action):
         self.name: str = name
         self.heal_amount: float = heal_amount
 
-    def __call__(self, actor: Entity, target_entity: Entity, env: Environment) -> None:
+    def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         target_health = target_entity.get_component(Health)
         target_health.health = min(target_health.max_health, target_health.health + self.heal_amount)
 
-    def action_description_text(self, actor: Entity, target_entity: Entity) -> str:
+    def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return f"{self.name} {target_entity.name}"
 
 
