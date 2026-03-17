@@ -604,7 +604,20 @@ class Follow_Action_Sequence(Non_Agent_Policy):
 #       from the tilemap. I think this is better than deepcopying an entity with a random position since we don't know
 #       what logic needs to exec in the entity's init
 def tilemap_to_entites(tilemap: list[list[str]], tileset: dict[str, dict]) -> list[Entity]:
-    pass
+    entities: list[Entity] = []
+
+    for y, row in enumerate(tilemap):
+        for x, tile_symbol in enumerate(row):
+            if tile_symbol in {"", " "}:
+                continue
+
+            if tile_symbol not in tileset:
+                raise KeyError(f"Tile symbol {tile_symbol!r} not found in tileset.")
+
+            entity_kwargs = deepcopy(tileset[tile_symbol])
+            entities.append(Entity(position=Position_2D(x, y), **entity_kwargs))
+
+    return entities
 
 
 # TODO: not sure if the info args are required for end_conversation and send_message
@@ -782,13 +795,42 @@ class Start_Private_Conversation(Action):
 def run_exp():
     exp_steps = 1000
 
-    env = Simple_Grid_World(
+    tilemap = [
+        ["", "", "", "", ""],
+        ["", "", "f", "", ""],
+        ["", "w", "", "c", ""],
+        ["", "", "b", "", ""],
+        ["", "", "b", "", ""],
+    ]
+    #bbbbb
+    #bbwwb
+    # add function to convert string to tilemap as well (look at slack screenshot)
+
+    tileset = {
+        "f": {"name": "Blue Flower", "tags": ["item"]},
+        "b": {
+            "name": "Barrel",
+            "tags": ["item"],
+            "components": [Health(max_health=1, starting_health=1)],
+        },
+        "c": {
+            "name": "Cow",
+            "components": [Health(max_health=5, starting_health=2)],
+        },
+        "w": {
+            "name": "Wall",
+            "tags": ["wall"],
+            "components": [Collidable()],
+        },
+    }
+
+    env = Test_Env(
         description="The forbidden forest.",
         state=Environment_State(
             entities=[
                 Entity(
                     name="Iskandar",
-                    position=Position_2D(0, 0),
+                    position=Position_2D(2, 2),
                     actions=[
                         Test_Action(),
                         Do_Nothing(),
@@ -905,6 +947,7 @@ def run_exp():
                     tags=["item"],
                     components=[Follow_Action_Sequence([(Attack, None)])],
                 ),
+                *tilemap_to_entites(tilemap, tileset),
             ]
         ),
         entity_order=entity_definition_order,
