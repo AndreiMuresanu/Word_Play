@@ -603,7 +603,7 @@ class Follow_Action_Sequence(Non_Agent_Policy):
 #       tileset are all of the args required to init the entity with the exception of the position arg which is added
 #       from the tilemap. I think this is better than deepcopying an entity with a random position since we don't know
 #       what logic needs to exec in the entity's init
-def tilemap_to_entites(tilemap: list[list[str]], tileset: dict[str, dict]) -> list[Entity]:
+def tilemap_to_entites(tilemap: list[list[str]], tileset: dict[str, dict | list[dict]]) -> list[Entity]:
     entities: list[Entity] = []
 
     for y, row in enumerate(tilemap):
@@ -614,8 +614,11 @@ def tilemap_to_entites(tilemap: list[list[str]], tileset: dict[str, dict]) -> li
             if tile_symbol not in tileset:
                 raise KeyError(f"Tile symbol {tile_symbol!r} not found in tileset.")
 
-            entity_kwargs = deepcopy(tileset[tile_symbol])
-            entities.append(Entity(position=Position_2D(x, y), **entity_kwargs))
+            tile_definition = deepcopy(tileset[tile_symbol])
+            entity_definitions = tile_definition if isinstance(tile_definition, list) else [tile_definition]
+
+            for entity_kwargs in entity_definitions:
+                entities.append(Entity(position=Position_2D(x, y), **entity_kwargs))
 
     return entities
 
@@ -796,15 +799,14 @@ def run_exp():
     exp_steps = 1000
 
     tilemap = [
-        ["", "", "", "", ""],
-        ["", "", "f", "", ""],
-        ["", "w", "", "c", ""],
-        ["", "", "b", "", ""],
-        ["", "", "b", "", ""],
+        ["", "", "", "", "", "", ""],
+        ["", "", "", "", "", "", ""],
+        ["", "", "f", "", "", "", ""],
+        ["kd", "w", "", "c", "", "", ""],
+        ["", "s", "b", "", "", "", ""],
+        ["", "", "b", "", "", "", ""],
+        ["", "F", "T", "", "", "", ""],
     ]
-    #bbbbb
-    #bbwwb
-    # add function to convert string to tilemap as well (look at slack screenshot)
 
     tileset = {
         "f": {"name": "Blue Flower", "tags": ["item"]},
@@ -815,16 +817,52 @@ def run_exp():
         },
         "c": {
             "name": "Cow",
-            "components": [Health(max_health=5, starting_health=2)],
+            "actions": [Move_Up(), Move_Down()],
+            "components": [
+                Health(max_health=5, starting_health=2),
+                Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
+                TalkingCow(),
+            ],
         },
         "w": {
             "name": "Wall",
             "tags": ["wall"],
             "components": [Collidable()],
         },
+        "kd": [
+            {
+                "name": "Copper Key",
+                "tags": ["item"],
+                "components": [Key(key_name="copper")],
+            },
+            {
+                "name": "Copper Door",
+                "components": [Door(key_name="copper"), Collidable()],
+            },
+        ],
+        "F": {
+            "name": "Fat Cow",
+            "components": [
+                Health(max_health=10, starting_health=10),
+                TalkingCow(),
+            ],
+        },
+        "T": {
+            "name": "Tiny Cow",
+            "components": [
+                Health(max_health=1, starting_health=1),
+                TalkingCow(),
+            ],
+        },
+        "s": {
+            "name": "Spike",
+            "actions": [Attack(name="Poke", damage_amount=1)],
+            "tags": ["item"],
+            "components": [Follow_Action_Sequence([(Attack, None)])],
+        },
     }
 
-    env = Test_Env(
+    env = Simple_Grid_World(
         description="The forbidden forest.",
         state=Environment_State(
             entities=[
@@ -859,17 +897,6 @@ def run_exp():
                         Human_Communication_Policy(),
                     ],
                 ),
-                Entity(
-                    name="Copper Key",
-                    position=Position_2D(0, 0),
-                    tags=["item"],
-                    components=[Key(key_name="copper")],
-                ),
-                Entity(
-                    name="Copper Door",
-                    position=Position_2D(0, 0),
-                    components=[Door(key_name="copper"), Collidable()],
-                ),
                 # Entity(
                 #     name="Andrei",
                 #     position=Position_2D(0, 0),
@@ -894,59 +921,6 @@ def run_exp():
                 #         Collidable(collidable_tags=["wall"]),
                 #     ],
                 # ),
-                Entity(name="Blue Flower", position=Position_2D(0, 1), tags=["item"]),
-                Entity(
-                    name="Barrel",
-                    position=Position_2D(0, 0),
-                    tags=["item"],
-                    components=[Health(max_health=1, starting_health=1)],
-                ),
-                Entity(
-                    name="Barrel",
-                    position=Position_2D(0, 1),
-                    tags=["item"],
-                    components=[Health(max_health=1, starting_health=1)],
-                ),
-                Entity(
-                    name="Cow",
-                    position=Position_2D(1, 0),
-                    actions=[Move_Up(), Move_Down()],
-                    components=[
-                        Health(max_health=5, starting_health=5),
-                        Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Fat Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=10, starting_health=10),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Tiny Cow",
-                    position=Position_2D(1, 0),
-                    components=[
-                        Health(max_health=1, starting_health=1),
-                        TalkingCow(),
-                    ],
-                ),
-                Entity(
-                    name="Wall",
-                    position=Position_2D(-1, 0),
-                    tags=["wall"],
-                    components=[Collidable()],
-                ),
-                # TODO: for a real pike entity, you likely want an Attack_All_Nearby_Entities action instead of Attack
-                Entity(
-                    name="Spike",
-                    position=Position_2D(0, -2),
-                    actions=[Attack(name="Poke", damage_amount=1)],
-                    tags=["item"],
-                    components=[Follow_Action_Sequence([(Attack, None)])],
-                ),
                 *tilemap_to_entites(tilemap, tileset),
             ]
         ),
