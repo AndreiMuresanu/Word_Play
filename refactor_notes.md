@@ -228,3 +228,10 @@ Old ideas:
 
 #     def pre_actions_step(self, env: Environment) -> None:
 #         for action in
+
+
+# TODO: create movement validations for a bounded 1D region and 2D boxes
+# 	These might require the addition of a "properties" attribute to the Movement_System class
+# 	This would contain things like: max_x, min_x, max_y, min_y, etc.
+# 	Idk if this should be a dict or if it should be typeless (it may be conceivable that you might want a custom class)
+# 		- i.e., maybe the Movement_System can store the entity positions for fast look-up??? Idk if this is the right place to do that

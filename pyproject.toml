@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "word-play"
+version = "2.0"
+description = "A package for creating text-based environments."
+readme = "README.md"
+requires-python = ">=3.13"
+authors = [
+    { name = "Andrei Muresanu", email = "andrei.muresanu@uwaterloo.ca" },
+]
+dependencies = []
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
