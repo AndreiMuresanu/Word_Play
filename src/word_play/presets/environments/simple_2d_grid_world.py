@@ -4,6 +4,7 @@ from typing import Callable
 
 from word_play.core import Entity, Environment, Observation
 from word_play.core.actions import Action_Selection
+from word_play.presets.environments.simple_env_reset_mixin import Simple_Env_Reset_Mixin
 from word_play.presets.entity_orderings import entity_definition_order
 from word_play.presets.movement.simple_2d_grid import INFINITE_2D_MOVEMENT_SYSTEM
 from word_play.presets.observation.simple_observation import Simple_Observation
@@ -11,7 +12,7 @@ from word_play.presets.reward_functions import zero_reward_func
 
 
 # TODO: ANDREI: make this a nice preset, e.g., have the reward_func=zero_reward_func be a default not a fixed thing
-class Simple_2D_Grid_World(Environment):
+class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
     def __init__(
         self,
         description: str,
@@ -39,7 +40,4 @@ class Simple_2D_Grid_World(Environment):
         pass
 
     def environment_end_of_step(self, action_selections: list[Action_Selection]):
-        pass
-
-    def _reset(self, seed=None) -> None:
         pass

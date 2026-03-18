@@ -68,6 +68,11 @@ class Environment(ABC):
         self.reward_func = reward_func
         self.entity_order = entity_order
         self.reset()
+        self.post_init()
+
+    def post_init(self) -> None:
+        """This method is called at the end of the __init__ method. It can be overwritten to provide more complex logic."""
+        pass
 
     @abstractmethod
     def observe(self, agent_id: int) -> Observation:
