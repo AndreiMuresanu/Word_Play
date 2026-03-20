@@ -56,7 +56,7 @@ class Human_Takes_Action(Agent_Policy):
 
         lines.append("")
         lines.append("Enter values separated by ';'")
-        lines.append("Example: 'value1; value2, ...'")
+        lines.append("Example: 'value1; value2; ...'")
 
         return "\n".join(lines) + "\n> "
 
