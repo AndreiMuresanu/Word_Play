@@ -1,6 +1,15 @@
 # word_play
 A package for creating text-based environments.
 
+# Quick Start
+
+## Simple Example
+
+```
+pip install -e .
+python examples/test_env_2.py
+```
+
 # Setup:
 
 ## Package Install
