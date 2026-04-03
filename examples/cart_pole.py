@@ -21,10 +21,21 @@ def register_model(model_mode: str) -> str:
                 app_name="Word Play",
             )
         )
+        return model_key
     if model_mode == "openrouter_mid":
         LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
             lambda: OpenRouter_Model(
                 model_name="qwen/qwen3-4b:free",
+                system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
+                generation_params={"temperature": 0.0},
+                app_name="Word Play",
+            )
+        )
+        return model_key
+    if model_mode == "openrouter_large":
+        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
+            lambda: OpenRouter_Model(
+                model_name="openai/gpt-5.4",
                 system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
                 generation_params={"temperature": 0.0},
                 app_name="Word Play",
