@@ -37,6 +37,7 @@ class Simple_Observation(Observation):
     nearby_entities: list[Entity]
     last_reward: float
     info: dict
+    observation_radius: int = 0
 
     def __str__(self) -> str:
         if "action_success" not in self.info:
@@ -49,6 +50,11 @@ class Simple_Observation(Observation):
             prev_block = f"LAST ACTION: {status}{extra}\n\n"
 
         agent_block = "YOUR STATE:\n" + indent(entity_state_to_str(self.agent))
+        visible_square_block = (
+            "VISIBLE AREA:\n"
+            + f"  square radius: {self.observation_radius}\n"
+            + f"  center: {self.agent.position}"
+        )
         nearby_block = format_nearby_entities(self.nearby_entities, self.agent)
         actions_block = "AVAILABLE ACTIONS (reply with the index):" + format_action_list(self.possible_actions)
 
@@ -58,6 +64,7 @@ class Simple_Observation(Observation):
                 [
                     prev_block + f"REWARD THIS TURN: {self.last_reward}",
                     agent_block,
+                    visible_square_block,
                     nearby_block,
                     actions_block,
                 ],
