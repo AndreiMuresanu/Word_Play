@@ -183,6 +183,16 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         sections.append(f"RECENT OBSERVATIONS (oldest to most recent):\n{entries}")
         return "\n\n".join(sections) + "\n\n"
 
+    def _conversation_memory_block(self) -> str:
+        if not self.conversation_history:
+            return ""
+
+        history_str = "\n".join(
+            f"- {entry['role']}: {entry['content']}"
+            for entry in self.conversation_history[-self.conversation_memory_window :]
+        )
+        return f"RECENT CONVERSATION:\n{history_str}\n\n"
+
     def _reasoning_prompt(self, observation: Observation) -> str:
         return (
             "You are controlling an agent in a grid-world game.\n"
@@ -190,6 +200,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             "Consider the agent's state, nearby entities, and available actions.\n"
             "Write your reasoning in plain text. Do NOT output JSON yet.\n\n"
             + self._observation_memory_block()
+            + self._conversation_memory_block()
             + f"CURRENT OBSERVATION:\n{observation}\n\n"
             + format_action_details(observation.possible_actions)
         )
@@ -224,6 +235,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             + kwargs_instruction
             + f"Example: {example_output}\n\n"
             + self._observation_memory_block()
+            + self._conversation_memory_block()
             + f"CURRENT OBSERVATION:\n{observation}\n"
             + reasoning_block + "\n"
             + format_action_details(observation.possible_actions) + "\n\n"
