@@ -17,42 +17,20 @@ from word_play.presets.action_policies.llm_action_and_communication import (  # 
     LLM_Action_And_Communication_Policy,
 )
 from word_play.presets.models import OpenAIChatModel, register_model  # noqa: E402
-from word_play.presets.renderers import EnvironmentLayoutAdapter, PygameRenderer  # noqa: E402
+from word_play.presets.renderers import (  # noqa: E402
+    EnvironmentLayoutAdapter,
+    PygameRenderer,
+    apply_agent_sidebar,
+    compact_non_empty_lines,
+    observation_action_lines,
+)
 
 DEFAULT_LOG_DIR = PROJECT_ROOT / "experiments" / "logs" / "dungeon_quest"
-
-
-def _compact_lines(text: str, limit: int = 4) -> list[str]:
-    """Return a few non-empty lines from an observation string."""
-    return [line.strip() for line in text.splitlines() if line.strip()][:limit]
-
-
-def _compact_action_lines(observation) -> list[str]:
-    """Return the full numbered list of currently available actions."""
-    return [f"[{idx}] {selection}" for idx, selection in enumerate(observation.possible_actions)]
-
-
-def _build_hud(env: DungeonRaidEnv, observation_summary: dict | None = None, action_info: dict | None = None) -> None:
-    """Update the renderer HUD with the LLM's current observation and selected action."""
-    sidebar_lines = []
-    sidebar_lines.append("Agent Thought Process:")
-    if action_info is not None and action_info.get("reasoning"):
-        sidebar_lines.extend([line for line in str(action_info["reasoning"]).splitlines() if line.strip()])
-    else:
-        sidebar_lines.append("(no explicit reasoning returned)")
-
-    if observation_summary is not None:
-        sidebar_lines.append("Possible Actions:")
-        sidebar_lines.extend(observation_summary["actions"])
-
-    env.hud_sidebar_header = "Agent"
-    env.hud_sidebar_lines = sidebar_lines[:32]
-
 
 def build_llm_dungeon_env(*, model_key: str, renderer: PygameRenderer | None = None) -> DungeonRaidEnv:
     """Create the dungeon env and replace the preview policy with the shared LLM agent policy."""
     env = DungeonRaidEnv(renderer=renderer)
-    env.hud_sidebar_width = 620
+    env.hud_sidebar_width = 380
 
     raider = env.agents[0]
     components = {
@@ -63,21 +41,19 @@ def build_llm_dungeon_env(*, model_key: str, renderer: PygameRenderer | None = N
     policy = LLM_Action_And_Communication_Policy(
         model_key=model_key,
         system_prompt=(
-            "You are controlling a dungeon raider in a sparse-reward dungeon crawl. "
-            "Read the observation literally. Use positions, walls, enemy locations, exit state, and the coordinate rules to decide what to do. "
-            "Trust the coordinate system and dx/dy offsets, not the rendered image. "
-            "Treat the bottom-left wall tile of each room as the origin (0, 0). "
-            "Move right means x+1. Move left means x-1. Move up means y+1. Move down means y-1. "
-            "Positive dy means the target is above you. Negative dy means the target is below you. "
+            "You are controlling a dungeon raider in a partially observed dungeon crawl. "
+            "Read the observation literally and do not assume anything outside the currently visible area. "
+            "Do not invent coordinates for yourself, enemies, walls, or the exit unless they are explicitly given. "
+            "Use only the local directional facts, your starting position for the room, your goals, and the available actions. "
             "Your main goal is to defeat the final boss, the Ash Warden. "
-            "To reach the boss, you must progress through the dungeon one room at a time. "
-            "To leave a room, you must kill every monster in that room. "
-            "The Moon Crypt contains a chest reward. If the room is clear and the chest is available, open it and choose one reward before leaving. "
-            "When all monsters are dead, the exit opens. "
-            "If enemies remain, prioritize reaching and killing them. "
-            "If no enemies remain, move to the exit tile. "
+            "Each room must be cleared before you can leave it. "
+            "When all enemies in the room are dead, the exit opens. "
+            "Stand on the open exit tile and choose Enter the exit to reach the next room. "
+            "If enemies remain and are visible, prioritize reaching and killing them. "
+            "If no enemies are visible, explore efficiently until you find them or find the open exit. "
+            "If a chest is visible in a cleared room, opening it can be worthwhile before leaving. "
             "If you are already standing on the open exit tile, choose Enter the exit immediately. "
-            "Choose exactly one valid action from the provided action list."
+            "Choose exactly one valid action from the provided action list."    
         ),
         action_generation_config={"temperature": 0.2},
         message_generation_config={"temperature": 0.3},
@@ -96,25 +72,25 @@ def build_llm_dungeon_env(*, model_key: str, renderer: PygameRenderer | None = N
         if env.agents:
             observation = env.observe(0)
             observation_summary = {
-                "summary": " ".join(_compact_lines(str(observation), limit=3)),
-                "lines": _compact_lines(str(observation), limit=10),
+                "summary": " ".join(compact_non_empty_lines(str(observation), limit=3)),
+                "lines": compact_non_empty_lines(str(observation), limit=10),
                 "full_text": str(observation),
-                "actions": _compact_action_lines(observation),
+                "actions": observation_action_lines(observation),
             }
             latest_action_info = getattr(env, "_latest_llm_action_info", None)
-            _build_hud(env, observation_summary, latest_action_info)
+            apply_agent_sidebar(
+                env,
+                reasoning=None if latest_action_info is None else latest_action_info.get("reasoning"),
+                selection=None if latest_action_info is None else latest_action_info.get("selection"),
+                action_lines=observation_summary["actions"],
+            )
 
     env.environment_end_of_step = wrapped_end_of_step
 
     initial_observation = env.observe(0)
-    _build_hud(
+    apply_agent_sidebar(
         env,
-        {
-            "summary": " ".join(_compact_lines(str(initial_observation), limit=3)),
-            "lines": _compact_lines(str(initial_observation), limit=10),
-            "full_text": str(initial_observation),
-            "actions": _compact_action_lines(initial_observation),
-        },
+        observation=initial_observation,
     )
     return env
 
@@ -151,10 +127,10 @@ def run_llm_dungeon_example(
         for agent_id, agent in enumerate(env.agents):
             observation = env.observe(agent_id)
             observation_summary = {
-                "summary": " ".join(_compact_lines(str(observation), limit=3)),
-                "lines": _compact_lines(str(observation), limit=10),
+                "summary": " ".join(compact_non_empty_lines(str(observation), limit=3)),
+                "lines": compact_non_empty_lines(str(observation), limit=10),
                 "full_text": str(observation),
-                "actions": _compact_action_lines(observation),
+                "actions": observation_action_lines(observation),
             }
             policy = agent.get_component(Agent_Policy)
             selection, info = policy.select_action(observation)
@@ -166,7 +142,12 @@ def run_llm_dungeon_example(
                 "attempt": info.get("attempt"),
             }
             setattr(env, "_latest_llm_action_info", action_info)
-            _build_hud(env, observation_summary, action_info)
+            apply_agent_sidebar(
+                env,
+                reasoning=action_info.get("reasoning"),
+                selection=action_info.get("selection"),
+                action_lines=observation_summary["actions"],
+            )
             selections.append(selection)
         return selections
 

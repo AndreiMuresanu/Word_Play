@@ -1,6 +1,9 @@
 from word_play.presets.renderers.renderer import (
+    apply_agent_sidebar,
+    compact_non_empty_lines,
     EnvironmentLayoutAdapter,
     GridLayoutAdapter,
+    observation_action_lines,
     PygameRenderer,
     PositionLayoutAdapter,
     Renderable,
@@ -16,6 +19,9 @@ __all__ = [
     "PygameRenderer",
     "Renderable",
     "Renderer",
+    "apply_agent_sidebar",
+    "compact_non_empty_lines",
+    "observation_action_lines",
     "render",
     "replay",
 ]

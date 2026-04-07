@@ -47,8 +47,8 @@ def world_bounds(
 
 def screen_rect_for_tile(renderer: "PygameRenderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
     """Convert a world tile coordinate into the top-left screen pixel."""
-    px = renderer.margin + (x - min_x) * renderer.tile_size
-    py = renderer.margin + (max_y - y) * renderer.tile_size
+    px = renderer.viewport_pad_w + (x - min_x) * renderer.tile_size
+    py = renderer.viewport_pad_n + (max_y - y) * renderer.tile_size
     return px, py
 
 
