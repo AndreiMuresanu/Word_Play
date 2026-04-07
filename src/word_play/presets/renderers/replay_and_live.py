@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pickle
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -89,6 +90,15 @@ class ReplayFrameEnvironment:
                             overlay_sprite=renderable_info.get("overlay_sprite"),
                             overlay_mode=renderable_info.get("overlay_mode", "badge"),
                             overlay_scale=renderable_info.get("overlay_scale"),
+                            foreground_sprite=renderable_info.get("foreground_sprite"),
+                            foreground_scale=renderable_info.get("foreground_scale"),
+                            shadow_scale=renderable_info.get("shadow_scale", 0.72),
+                            bob_amplitude=renderable_info.get("bob_amplitude", 0.0),
+                            bob_speed=renderable_info.get("bob_speed", 1.6),
+                            animation_frames=renderable_info.get("animation_frames"),
+                            animation_fps=renderable_info.get("animation_fps", 5.0),
+                            emissive_sprite=renderable_info.get("emissive_sprite"),
+                            emissive_intensity=renderable_info.get("emissive_intensity", 84),
                         )
                     ],
                 )
@@ -175,10 +185,12 @@ def apply_prompt_choice(pending_prompt: dict[str, Any], option_index: int) -> bo
 def apply_live_hud(
     env: "Environment",
     *,
+    renderer: "PygameRenderer",
     paused: bool,
     step_cursor: int,
     total_steps: int,
     pending_prompt: dict[str, Any] | None = None,
+    step_in_flight: bool = False,
 ) -> None:
     """Populate HUD text for live stepping and required-input prompts."""
     if pending_prompt is not None:
@@ -197,7 +209,7 @@ def apply_live_hud(
         ]
         return
 
-    mode = "WAIT" if paused else "LIVE"
+    mode = "THINK" if step_in_flight else "WAIT" if paused else "LIVE"
     selected_preview = []
     for agent in getattr(env, "agents", []):
         possible_actions = env.possible_actions(agent)
@@ -210,8 +222,20 @@ def apply_live_hud(
         f"Deliveries: {getattr(env, 'deliveries', 0)}   {mode}"
     )
     env.hud_lines = [
-        "Live view: Esc quit, R reset, Enter advance when waiting.",
+        "Live view: Esc quit, R reset, Enter advance when waiting, click entity to inspect.",
         f"Progress: step {step_cursor}/{total_steps}",
+        (
+            f"Camera: focus {renderer.camera_focus_entity_name} "
+            f"(radius {getattr(env, 'sight_radius', renderer.camera_focus_radius_tiles)})"
+            if renderer.camera_focus_entity_name
+            else "Camera: full map"
+        ),
+        (
+            f"Inspecting: {renderer.selected_entity_name}"
+            if getattr(renderer, "selected_entity_name", None)
+            else "Inspecting: none"
+        ),
+        ("Agent is thinking..." if step_in_flight else "Agent ready."),
         *([orders_line] if orders_line else []),
         *([health_line] if health_line else []),
         *(selected_preview[:2] or ["No agent actions available."]),
@@ -219,7 +243,13 @@ def apply_live_hud(
     ]
 
 
-def apply_replay_hud(frame: dict[str, Any], frame_index: int, frame_count: int, paused: bool) -> None:
+def apply_replay_hud(
+    frame: dict[str, Any],
+    renderer: "PygameRenderer",
+    frame_index: int,
+    frame_count: int,
+    paused: bool,
+) -> None:
     """Inject replay-specific HUD text into a recorded frame payload."""
     action_lines = [f"{item['actor_name']}: {item['label']}" for item in frame.get("selected_actions", [])]
     note_lines = list(frame.get("notes", []))
@@ -228,11 +258,36 @@ def apply_replay_hud(frame: dict[str, Any], frame_index: int, frame_count: int, 
         f"Deliveries: {frame.get('deliveries', 0)}   REPLAY"
     )
     frame["hud_lines"] = [
-        "Controls: space play/pause, left/right look back, home/end jump, enter step, r reset, esc quit",
+        "Controls: space play/pause, left/right look back, home/end jump, enter step, r reset, esc quit, click inspect, [ ] resize",
         f"Timeline: replay frame {frame_index + 1}/{frame_count} {'PAUSE' if paused else 'LIVE'}",
+        (
+            f"Inspecting: {renderer.selected_entity_name}"
+            if getattr(renderer, "selected_entity_name", None)
+            else "Inspecting: none"
+        ),
         *(action_lines[:2] or note_lines[:2] or ["No recorded action for this frame."]),
         *(note_lines[2:3]),
     ]
+
+
+def handle_entity_click(renderer: "PygameRenderer", env: "Environment", mouse_pos: tuple[int, int]) -> None:
+    """Select the clicked entity and focus agents; clear selection on empty-space clicks."""
+    for entity in getattr(env.state, "entities", []):
+        if entity.name not in renderer._last_drawn_entity_rects:
+            continue
+        rect = renderer._last_drawn_entity_rects[entity.name]
+        if rect.collidepoint(mouse_pos):
+            renderer.selected_entity_name = entity.name
+            renderer.camera_focus_entity_name = entity.name if getattr(entity, "is_agent", False) else None
+            sight_radius = getattr(env, "sight_radius", None)
+            if renderer.camera_focus_entity_name is not None and isinstance(sight_radius, int):
+                renderer.camera_focus_radius_tiles = max(2, sight_radius)
+            if renderer.camera_focus_entity_name is None:
+                renderer.camera_center = None
+            return
+    renderer.selected_entity_name = None
+    renderer.camera_focus_entity_name = None
+    renderer.camera_center = None
 
 
 def capture_frame(
@@ -349,13 +404,17 @@ def replay_frames(
 
     while True:
         frame = dict(frames[viewing_index])
-        apply_replay_hud(frame, viewing_index, len(frames), paused)
-        render_environment(renderer, ReplayFrameEnvironment(frame))
+        apply_replay_hud(frame, renderer, viewing_index, len(frames), paused)
+        replay_env = ReplayFrameEnvironment(frame)
+        render_environment(renderer, replay_env)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                handle_entity_click(renderer, replay_env, event.pos)
+                continue
             if event.type != pygame.KEYDOWN:
                 continue
             if event.key == pygame.K_ESCAPE:
@@ -376,7 +435,6 @@ def replay_frames(
             elif event.key == pygame.K_END:
                 paused = True
                 viewing_index = len(frames) - 1
-
         if not paused and time.monotonic() - last_advance >= step_delay:
             if viewing_index >= len(frames) - 1:
                 paused = True
@@ -450,21 +508,80 @@ def run_live_view(
     paused = not autoplay
     last_step_at = time.monotonic()
     pending_prompt: dict[str, Any] | None = None
+    step_request_id = 0
+    step_worker: threading.Thread | None = None
+    step_result: dict[str, Any] | None = None
+
+    def start_step_request(*, resume_play: bool) -> None:
+        nonlocal step_request_id, step_worker, step_result
+        if step_worker is not None and step_worker.is_alive():
+            return
+        step_request_id += 1
+        request_id = step_request_id
+        step_result = None
+
+        def worker() -> None:
+            nonlocal step_result
+            try:
+                actions = step_builder(env)
+                step_result = {
+                    "request_id": request_id,
+                    "resume_play": resume_play,
+                    "step_actions": actions,
+                    "error": None,
+                }
+            except Exception as exc:  # pragma: no cover - surfaced in UI loop
+                step_result = {
+                    "request_id": request_id,
+                    "resume_play": resume_play,
+                    "step_actions": None,
+                    "error": exc,
+                }
+
+        step_worker = threading.Thread(target=worker, daemon=True)
+        step_worker.start()
 
     while True:
         apply_live_hud(
             env,
+            renderer=renderer,
             paused=paused,
             step_cursor=committed_steps,
             total_steps=total_steps,
             pending_prompt=pending_prompt,
+            step_in_flight=step_worker is not None and step_worker.is_alive(),
         )
         render_environment(renderer, env)
+
+        if step_result is not None and step_result["request_id"] == step_request_id:
+            result = step_result
+            step_result = None
+            step_worker = None
+            if result["error"] is not None:
+                raise result["error"]
+            prompt_state = build_pending_prompt(result["step_actions"], resume_play=result["resume_play"])
+            if prompt_state is None:
+                frames = step_and_record(
+                    renderer,
+                    env,
+                    frames=frames,
+                    recorder=recorder,
+                    step_actions=result["step_actions"],
+                )
+                committed_steps += 1
+                last_step_at = time.monotonic()
+                paused = not result["resume_play"]
+            else:
+                pending_prompt = prompt_state
+                paused = True
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return frames
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                handle_entity_click(renderer, env, event.pos)
+                continue
             if event.type != pygame.KEYDOWN:
                 continue
             if event.key == pygame.K_ESCAPE:
@@ -490,6 +607,9 @@ def run_live_view(
                 continue
 
             if event.key == pygame.K_r and reset_factory is not None:
+                step_request_id += 1
+                step_result = None
+                step_worker = None
                 env = reset_factory()
                 frames = []
                 frames = record_frame(
@@ -504,42 +624,25 @@ def run_live_view(
                 committed_steps = 0
                 last_step_at = time.monotonic()
                 pending_prompt = None
+                renderer.camera_focus_entity_name = None
+                renderer.selected_entity_name = None
+                renderer.camera_center = None
+                renderer._entity_last_positions = {}
             elif event.key in {pygame.K_RETURN, pygame.K_KP_ENTER} and committed_steps < total_steps:
-                step_actions = step_builder(env)
-                prompt_state = build_pending_prompt(step_actions, resume_play=False)
-                if prompt_state is None:
-                    frames = step_and_record(
-                        renderer,
-                        env,
-                        frames=frames,
-                        recorder=recorder,
-                        step_actions=step_actions,
-                    )
-                    committed_steps += 1
-                    last_step_at = time.monotonic()
-                    paused = True
-                else:
-                    pending_prompt = prompt_state
+                if step_worker is None or not step_worker.is_alive():
+                    start_step_request(resume_play=False)
                     paused = True
 
-        if pending_prompt is None and not paused and committed_steps < total_steps and not episode_done(env):
+        if (
+            pending_prompt is None
+            and not paused
+            and committed_steps < total_steps
+            and not episode_done(env)
+            and not (step_worker is not None and step_worker.is_alive())
+        ):
             now = time.monotonic()
             if now - last_step_at >= step_delay:
-                step_actions = step_builder(env)
-                prompt_state = build_pending_prompt(step_actions, resume_play=True)
-                if prompt_state is None:
-                    frames = step_and_record(
-                        renderer,
-                        env,
-                        frames=frames,
-                        recorder=recorder,
-                        step_actions=step_actions,
-                    )
-                    committed_steps += 1
-                    last_step_at = now
-                else:
-                    pending_prompt = prompt_state
-                    paused = True
+                start_step_request(resume_play=True)
 
         clock.tick(60)
 

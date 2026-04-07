@@ -22,6 +22,15 @@ class Renderable(Component):
         overlay_sprite: str | None = None,
         overlay_mode: str = "badge",
         overlay_scale: float | None = None,
+        foreground_sprite: str | None = None,
+        foreground_scale: float | None = None,
+        shadow_scale: float = 0.72,
+        bob_amplitude: float = 0.0,
+        bob_speed: float = 1.6,
+        animation_frames: list[str] | None = None,
+        animation_fps: float = 5.0,
+        emissive_sprite: str | None = None,
+        emissive_intensity: int = 84,
     ):
         super().__init__()
         self.sprite_path = sprite_path
@@ -30,6 +39,15 @@ class Renderable(Component):
         self.overlay_sprite = overlay_sprite
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
+        self.foreground_sprite = foreground_sprite
+        self.foreground_scale = foreground_scale
+        self.shadow_scale = shadow_scale
+        self.bob_amplitude = bob_amplitude
+        self.bob_speed = bob_speed
+        self.animation_frames = list(animation_frames or [])
+        self.animation_fps = animation_fps
+        self.emissive_sprite = emissive_sprite
+        self.emissive_intensity = emissive_intensity
 
 
 class Renderer(ABC):
@@ -64,6 +82,50 @@ class EnvironmentLayoutAdapter(GridLayoutAdapter):
         return [] if background_tiles is None else background_tiles()
 
 
+def compact_non_empty_lines(text: str, limit: int = 4) -> list[str]:
+    """Return a few non-empty trimmed lines for renderer-side HUD formatting."""
+    return [line.strip() for line in text.splitlines() if line.strip()][:limit]
+
+
+def observation_action_lines(observation: Any) -> list[str]:
+    """Return the full numbered list of currently available actions."""
+    return [f"[{idx}] {selection}" for idx, selection in enumerate(observation.possible_actions)]
+
+
+def apply_agent_sidebar(
+    env: "Environment",
+    *,
+    header: str = "Agent",
+    reasoning: str | None = None,
+    selection: str | None = None,
+    observation: Any | None = None,
+    action_lines: list[str] | None = None,
+    max_reasoning_lines: int = 32,
+    max_selection_lines: int = 4,
+    max_action_lines: int = 12,
+) -> None:
+    """Populate renderer-facing sidebar fields from raw agent UI state."""
+    reasoning_lines = ["Agent Thought Process:"]
+    if reasoning:
+        reasoning_lines.extend([line for line in str(reasoning).splitlines() if line.strip()])
+    else:
+        reasoning_lines.append("(no explicit reasoning returned)")
+
+    chosen_action_lines = ["Chosen Action:"]
+    chosen_action_lines.append(str(selection) if selection else "(no action chosen yet)")
+
+    resolved_action_lines = list(action_lines or [])
+    if observation is not None and not resolved_action_lines:
+        resolved_action_lines = observation_action_lines(observation)
+    sidebar_action_lines = ["Possible Actions:"]
+    sidebar_action_lines.extend(resolved_action_lines or ["(no actions available)"])
+
+    env.hud_sidebar_header = header
+    env.hud_sidebar_lines = reasoning_lines[:max_reasoning_lines]
+    env.hud_sidebar_selected_action = chosen_action_lines[:max_selection_lines]
+    env.hud_sidebar_actions = sidebar_action_lines[:max_action_lines]
+
+
 from .draw import render_environment
 from .replay_and_live import replay_frames, replay_recording, run_live_view
 from .runtime import configure_renderer, init_pygame_if_needed
@@ -71,9 +133,19 @@ from .runtime import configure_renderer, init_pygame_if_needed
 
 class PygameRenderer(Renderer):
     """Concrete renderer that delegates drawing and replay to pygame helpers."""
-    def __init__(self, layout: PositionLayoutAdapter, tile_size: int = 32, draw_grid_overlay: bool = False):
+    def __init__(
+        self,
+        layout: PositionLayoutAdapter,
+        tile_size: int = 32,
+        draw_grid_overlay: bool = False,
+    ):
         """Configure renderer state, layout mapping, and sizing defaults."""
-        configure_renderer(self, layout=layout, tile_size=tile_size, draw_grid_overlay=draw_grid_overlay)
+        configure_renderer(
+            self,
+            layout=layout,
+            tile_size=tile_size,
+            draw_grid_overlay=draw_grid_overlay,
+        )
 
     def render(self, env: "Environment") -> None:
         """Initialize pygame if needed and draw the current environment."""
