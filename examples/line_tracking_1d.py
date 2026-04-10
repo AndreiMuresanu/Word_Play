@@ -1,7 +1,7 @@
 from word_play.core import Agent_Policy
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
-from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
+from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY, OpenRouter_Model
 
 import csv
 import os
@@ -12,40 +12,40 @@ from line_tracking_1d_env import Line_Tracking_1D, build_line_tracking_agent
 def register_model(model_mode: str) -> str:
     model_key = "line_tracking_model"
     if model_mode == "human_llm":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(lambda: Human_Model())
+        LLM_MODEL_REGISTRY.register(model_key, Human_Model)
         return model_key
     if model_mode == "openrouter_small":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="meta-llama/llama-3.2-1b-instruct",
-                system_prompt=(
-                    'Your goal is to keep the agent aligned with the moving target. '
-                    'Use the target side and drift direction to decide whether to move left, stay still, or move right. '
-                    'Respond only with JSON: {"action_choice_idx": <integer>}.'
-                ),
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="meta-llama/llama-3.2-1b-instruct",
+            system_prompt=(
+                'Your goal is to keep the agent aligned with the moving target. '
+                'Use the target side and drift direction to decide whether to move left, stay still, or move right. '
+                'Respond only with JSON: {"action_choice_idx": <integer>}.'
+            ),
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     if model_mode == "openrouter_mid":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="meta-llama/llama-3-8b-instruct",
-                system_prompt="You are controlling a line tracking system. Choose the action that keeps the agent aligned with the moving target and follow the output format exactly.",
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="meta-llama/llama-3-8b-instruct",
+            system_prompt="You are controlling a line tracking system. Choose the action that keeps the agent aligned with the moving target and follow the output format exactly.",
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     if model_mode == "openrouter_large":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="openai/gpt-5.4",
-                system_prompt="You are controlling a line tracking system. Choose the action that keeps the agent aligned with the moving target and follow the output format exactly.",
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="openai/gpt-5.4",
+            system_prompt="You are controlling a line tracking system. Choose the action that keeps the agent aligned with the moving target and follow the output format exactly.",
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     raise ValueError(f"Unsupported model_mode: {model_mode}")

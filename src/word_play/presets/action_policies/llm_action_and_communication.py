@@ -6,7 +6,7 @@ from typing import Any
 
 from word_play.core import Agent_Policy, Entity, Environment, Observation
 from word_play.core.actions import Action_Selection
-from word_play.presets.models import Model, resolve_registered_model
+from word_play.presets.models import LLM_MODEL_REGISTRY, Model
 from word_play.presets.observation.simple_observation import format_action_details
 from word_play.presets.systems.communication.core import Communication_Policy
 
@@ -62,11 +62,10 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         self.observation_history: list[str] = []
         self.observation_summary: str | None = None
         self.conversation_history: list[dict[str, str]] = []
-        self.active_conversation_participants: list[str] = []
 
     @property
     def model(self) -> Model:
-        return resolve_registered_model(self.model_key)
+        return LLM_MODEL_REGISTRY.resolve(self.model_key)
 
     # -----------------------------------------------------------------------
     # Agent_Policy — action selection
@@ -250,6 +249,14 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             "Try again. Output ONLY the JSON object."
         )
 
+    def _with_system(self, prompt: str) -> str:
+        """
+        Prepend the policy-level system prompt for text-only model interfaces.
+        """
+        if self.system_prompt:
+            return f"{self.system_prompt}\n\n{prompt}"
+        return prompt
+
     # -----------------------------------------------------------------------
     # Response parsing
     # -----------------------------------------------------------------------
@@ -287,36 +294,23 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             raise ValueError("JSON response must be an object.")
         return parsed
 
-
-    def _with_system(self, prompt: str) -> str:
-        if self.system_prompt:
-            return f"{self.system_prompt}\n\n{prompt}"
-        return prompt
-
     def _parse_action_kwargs(self, action_selection: Action_Selection, raw_kwargs: Any) -> dict:
         if not action_selection.required_kwargs:
             return {}
 
-        if isinstance(raw_kwargs, dict):
-            return self._parse_action_kwargs_dict(action_selection, raw_kwargs)
+        if not isinstance(raw_kwargs, dict):
+            raise ValueError("'action_kwargs' must be a JSON object.")
 
-        if isinstance(raw_kwargs, list):
-            kwarg_text = "; ".join(self._coerce_kwarg_value(value) for value in raw_kwargs)
-            return action_selection.parse_and_validate_kwarg_list(kwarg_text)
+        expected_keys = list(action_selection.required_kwargs.keys())
+        missing = [key for key in expected_keys if key not in raw_kwargs]
+        unexpected = [key for key in raw_kwargs.keys() if key not in action_selection.required_kwargs]
+        if missing:
+            raise ValueError(f"Missing required arguments: {', '.join(missing)}")
+        if unexpected:
+            raise ValueError(f"Unexpected arguments: {', '.join(unexpected)}")
 
-        if isinstance(raw_kwargs, str):
-            try:
-                return action_selection.parse_and_validate_kwarg_dict(raw_kwargs)
-            except Exception:
-                return action_selection.parse_and_validate_kwarg_list(raw_kwargs)
-
-        raise ValueError("'action_kwargs' must be a JSON object, list, or string.")
-
-    def _parse_action_kwargs_dict(self, action_selection: Action_Selection, raw_kwargs: dict[str, Any]) -> dict:
-        parts = []
-        for key, value in raw_kwargs.items():
-            parts.append(f"{key}: {self._coerce_kwarg_value(value)}")
-        return action_selection.parse_and_validate_kwarg_dict(", ".join(parts))
+        ordered_values = [self._coerce_kwarg_value(raw_kwargs[key]) for key in expected_keys]
+        return action_selection.parse_and_validate_kwarg_list("; ".join(ordered_values))
 
     def _coerce_kwarg_value(self, value: Any) -> str:
         if isinstance(value, str):
@@ -332,7 +326,6 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     def start_conversation(
         self, participants: list[Entity], env: Environment, info: str | None = None
     ) -> None:
-        self.active_conversation_participants = [entity.name for entity in participants if entity is not self.entity]
         self.conversation_history.clear()
         if info:
             self.conversation_history.append({"role": "system", "content": info})
@@ -360,7 +353,6 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     ) -> None:
         if info:
             self.conversation_history.append({"role": "system", "content": info})
-        self.active_conversation_participants = []
         self._trim_history()
 
     def _message_prompt(

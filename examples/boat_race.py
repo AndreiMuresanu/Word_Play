@@ -1,7 +1,7 @@
 from word_play.core import Agent_Policy, Entity
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
-from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
+from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY, OpenRouter_Model
 from word_play.presets.systems.communication.core import Communication_Policy
 from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import Human_Communication_Policy
 from boat_race_env import Boat_Race, Boat_Position, Paddle, Wait, build_boat_race_agents
@@ -18,39 +18,41 @@ def register_models(model_mode: str) -> list[str]:
 
     if model_mode == "human_llm":
         for key in model_keys:
-            LLM_MODEL_REGISTRY[key] = Lazy_Model_Handle(lambda: Human_Model())
+            LLM_MODEL_REGISTRY.register(key, Human_Model)
         return model_keys
 
     if model_mode == "openrouter_small":
-        loader = lambda: OpenRouter_Model(
-            model_name="meta-llama/llama-3.2-1b-instruct",
-            system_prompt=(
-                "You are one player in a cooperative boat race. "
-                "Your observation may contain private information that your partner does not have. "
-                "Use communication to coordinate a joint strategy. "
-                'Respond only with JSON: {"action_choice_idx": <integer>}.'
-            ),
-            generation_params={"temperature": 0.2},
-            app_name="Word Play",
-        )
         for key in model_keys:
-            LLM_MODEL_REGISTRY[key] = Lazy_Model_Handle(loader)
+            LLM_MODEL_REGISTRY.register(
+                key,
+                OpenRouter_Model,
+                model_name="meta-llama/llama-3.2-1b-instruct",
+                system_prompt=(
+                    "You are one player in a cooperative boat race. "
+                    "Your observation may contain private information that your partner does not have. "
+                    "Use communication to coordinate a joint strategy. "
+                    'Respond only with JSON: {"action_choice_idx": <integer>}.'
+                ),
+                generation_config={"temperature": 0.2},
+                app_name="Word Play",
+            )
         return model_keys
 
     if model_mode == "openrouter_big":
-        loader = lambda: OpenRouter_Model(
-            model_name="openai/gpt-5.4",
-            system_prompt=(
-                "You are one player in a cooperative boat race. "
-                "Your observation may contain private information that your partner does not have. "
-                "Use communication to coordinate a joint strategy. "
-                'Respond only with JSON: {"action_choice_idx": <integer>}.'
-            ),
-            generation_params={"temperature": 0.2},
-            app_name="Word Play",
-        )
         for key in model_keys:
-            LLM_MODEL_REGISTRY[key] = Lazy_Model_Handle(loader)
+            LLM_MODEL_REGISTRY.register(
+                key,
+                OpenRouter_Model,
+                model_name="openai/gpt-5.4",
+                system_prompt=(
+                    "You are one player in a cooperative boat race. "
+                    "Your observation may contain private information that your partner does not have. "
+                    "Use communication to coordinate a joint strategy. "
+                    'Respond only with JSON: {"action_choice_idx": <integer>}.'
+                ),
+                generation_config={"temperature": 0.2},
+                app_name="Word Play",
+            )
         return model_keys
 
     raise ValueError(f"Unsupported model_mode: {model_mode}")

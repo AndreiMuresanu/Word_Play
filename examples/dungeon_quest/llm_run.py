@@ -109,12 +109,11 @@ def run_llm_dungeon_example(
     """Run the live LLM dungeon simulation and return the saved replay pickle path."""
     register_model(
         model_key,
-        lambda: OpenRouter_Model(
-            model_name=model_name,
-            generation_config={"temperature": 0.2},
-            api_key_env="OPENROUTER_API_KEY",
-            base_url=base_url,
-        ),
+        OpenRouter_Model,
+        model_name=model_name,
+        generation_config={"temperature": 0.2},
+        api_key_env="OPENROUTER_API_KEY",
+        base_url=base_url,
     )
 
     renderer = PygameRenderer(layout=EnvironmentLayoutAdapter(), tile_size=tile_size)

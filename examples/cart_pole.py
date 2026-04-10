@@ -1,7 +1,7 @@
 from word_play.core import Agent_Policy, Entity
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
-from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
+from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY, OpenRouter_Model
 
 import sys
 from cart_pole_env import Cart_Pole, CartPole_Position, Push_Left, Push_Right
@@ -10,36 +10,36 @@ from cart_pole_env import Cart_Pole, CartPole_Position, Push_Left, Push_Right
 def register_model(model_mode: str) -> str:
     model_key = "cart_pole_model"
     if model_mode == "human_llm":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(lambda: Human_Model())
+        LLM_MODEL_REGISTRY.register(model_key, Human_Model)
         return model_key
     if model_mode == "openrouter_small":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="meta-llama/llama-3.2-1b-instruct",
-                system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="meta-llama/llama-3.2-1b-instruct",
+            system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     if model_mode == "openrouter_mid":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="qwen/qwen3-4b:free",
-                system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="qwen/qwen3-4b:free",
+            system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     if model_mode == "openrouter_large":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="openai/gpt-5.4",
-                system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
-                generation_params={"temperature": 0.0},
-                app_name="Word Play",
-            )
+        LLM_MODEL_REGISTRY.register(
+            model_key,
+            OpenRouter_Model,
+            model_name="openai/gpt-5.4",
+            system_prompt="You are controlling a cart-pole system. Choose the action that keeps the pole balanced and follow the output format exactly.",
+            generation_config={"temperature": 0.0},
+            app_name="Word Play",
         )
         return model_key
     raise ValueError(f"Unsupported model_mode: {model_mode}")

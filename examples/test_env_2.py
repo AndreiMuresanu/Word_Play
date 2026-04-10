@@ -41,7 +41,7 @@ from word_play.presets.systems.communication import (
 from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
-from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY
+from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY
 from word_play.utils import tilemap_to_entities
 
 import pprint
@@ -73,7 +73,7 @@ class Test_Action(Action):
 def register_run_exp_model(model_mode: str) -> str:
     model_key = "run_exp_llm"
     if model_mode == "human_llm":
-        LLM_MODEL_REGISTRY[model_key] = Lazy_Model_Handle(lambda: Human_Model())
+        LLM_MODEL_REGISTRY.register(model_key, Human_Model)
     else:
         raise ValueError(f"Unsupported model_mode: {model_mode}")
     return model_key

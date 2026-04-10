@@ -17,7 +17,7 @@ from private_sum_coordination_env import (
     Shared_Room_Position,
     build_private_sum_agents,
 )
-from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
+from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY, OpenRouter_Model
 from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import Human_Communication_Policy
 from word_play.presets.systems.communication.core import Communication_Policy
 
@@ -30,54 +30,36 @@ def register_models(model_mode: str, num_agents: int) -> list[str]:
     model_keys = [f"private_sum_model_{idx}" for idx in range(num_agents)]
 
     if model_mode == "human_llm":
-        shared_model = Lazy_Model_Handle(lambda: Human_Model())
+        for key in model_keys:
+            LLM_MODEL_REGISTRY.register(key, Human_Model)
+        return model_keys
     elif model_mode == "openrouter_small":
-        shared_model = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="meta-llama/llama-3.2-1b-instruct",
-                system_prompt=(
-                    "You are a cooperative game agent. "
-                    "Follow the requested output format exactly. "
-                    "If asked for action selection, return only the required JSON. "
-                    "If asked to send a chat message, send one short plain-text message."
-                ),
-                generation_params={"temperature": 0.2},
-                app_name="Word Play",
-            )
-        )
+        model_name = "meta-llama/llama-3.2-1b-instruct"
+        generation_config = {"temperature": 0.2}
     elif model_mode == "openrouter_mid":
-        shared_model = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="meta-llama/llama-3-8b-instruct",
-                system_prompt=(
-                    "You are a cooperative game agent. "
-                    "Follow the requested output format exactly. "
-                    "If asked for action selection, return only the required JSON. "
-                    "If asked to send a chat message, send one short plain-text message."
-                ),
-                generation_params={"temperature": 0.2},
-                app_name="Word Play",
-            )
-        )
+        model_name = "meta-llama/llama-3-8b-instruct"
+        generation_config = {"temperature": 0.2}
     elif model_mode == "openrouter_large":
-        shared_model = Lazy_Model_Handle(
-            lambda: OpenRouter_Model(
-                model_name="openai/gpt-5.4",
-                system_prompt=(
-                    "You are a cooperative game agent. "
-                    "Follow the requested output format exactly. "
-                    "If asked for action selection, return only the required JSON. "
-                    "If asked to send a chat message, send one short plain-text message."
-                ),
-                generation_params={"temperature": 0.1},
-                app_name="Word Play",
-            )
-        )
+        model_name = "openai/gpt-5.4"
+        generation_config = {"temperature": 0.1}
     else:
         raise ValueError(f"Unsupported model_mode: {model_mode}")
 
+    system_prompt = (
+        "You are a cooperative game agent. "
+        "Follow the requested output format exactly. "
+        "If asked for action selection, return only the required JSON. "
+        "If asked to send a chat message, send one short plain-text message."
+    )
     for key in model_keys:
-        LLM_MODEL_REGISTRY[key] = shared_model
+        LLM_MODEL_REGISTRY.register(
+            key,
+            OpenRouter_Model,
+            model_name=model_name,
+            system_prompt=system_prompt,
+            generation_config=generation_config,
+            app_name="Word Play",
+        )
     return model_keys
 
 
