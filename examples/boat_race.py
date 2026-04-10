@@ -1,10 +1,10 @@
 from word_play.core import Agent_Policy, Entity
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
-from word_play.presets.environments.boat_race import Boat_Race, Boat_Position, Paddle, Wait, build_boat_race_agents
 from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
 from word_play.presets.systems.communication.core import Communication_Policy
 from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import Human_Communication_Policy
+from boat_race_env import Boat_Race, Boat_Position, Paddle, Wait, build_boat_race_agents
 
 import sys
 

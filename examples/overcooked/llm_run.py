@@ -20,7 +20,7 @@ from word_play.core import Agent_Policy  # noqa: E402
 from word_play.presets.action_policies.llm_action_and_communication import (  # noqa: E402
     LLM_Action_And_Communication_Policy,
 )
-from word_play.presets.models import OpenAIChatModel, register_model  # noqa: E402
+from word_play.presets.models import OpenRouter_Model, register_model  # noqa: E402
 from word_play.presets.renderers import PygameRenderer  # noqa: E402
 
 DEFAULT_LOG_DIR = PROJECT_ROOT / "experiments" / "logs" / "overcooked"
@@ -163,11 +163,11 @@ def run_llm_overcooked_example(
     """Run the live LLM overcooked simulation and return the saved replay pickle path."""
     register_model(
         model_key,
-        lambda: OpenAIChatModel(
+        lambda: OpenRouter_Model(
             model_name=model_name,
+            generation_config={"temperature": 0.2},
             api_key_env="OPENROUTER_API_KEY",
             base_url=base_url,
-            default_generation_config={"temperature": 0.2},
         ),
     )
 

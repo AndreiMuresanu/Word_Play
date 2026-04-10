@@ -131,7 +131,7 @@ class CartPole_Observation(Observation):
 
 
 def cart_pole_reward(agent_actions: list[Action_Selection], env: Environment) -> list[float]:
-    env = env  # type narrow for lintless use
+    env = env
     return [0.0 if env.terminations[0] else 1.0]
 
 

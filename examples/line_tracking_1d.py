@@ -1,12 +1,12 @@
 from word_play.core import Agent_Policy
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
-from word_play.presets.environments.line_tracking_1d import Line_Tracking_1D, build_line_tracking_agent
 from word_play.presets.models import Human_Model, Lazy_Model_Handle, LLM_MODEL_REGISTRY, OpenRouter_Model
 
 import csv
 import os
 import sys
+from line_tracking_1d_env import Line_Tracking_1D, build_line_tracking_agent
 
 
 def register_model(model_mode: str) -> str:

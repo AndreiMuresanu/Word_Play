@@ -6,8 +6,7 @@ from typing import Any
 
 from word_play.core import Agent_Policy, Entity, Environment, Observation
 from word_play.core.actions import Action_Selection
-from word_play.model import Model
-from word_play.presets.models import resolve_registered_model
+from word_play.presets.models import Model, resolve_registered_model
 from word_play.presets.observation.simple_observation import format_action_details
 from word_play.presets.systems.communication.core import Communication_Policy
 
