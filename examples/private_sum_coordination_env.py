@@ -72,6 +72,23 @@ class Private_Sum_Observation(Observation):
 
         steps_remaining = max(0, self.max_steps - self.step_index)
         teammates = ", ".join(self.teammate_names)
+        communication_summary = self.info.get("communication_summary", {})
+        if isinstance(communication_summary, dict):
+            received_signals = communication_summary.get("received_signals", {})
+            own_signal = communication_summary.get("own_signal", self.private_signal)
+            is_complete = communication_summary.get("is_complete")
+        else:
+            received_signals = {}
+            own_signal = self.private_signal
+            is_complete = False
+
+        if isinstance(received_signals, dict):
+            received_signals_text = ", ".join(
+                f"{name}={value}" for name, value in received_signals.items()
+            ) or "(none)"
+        else:
+            received_signals_text = "(none)"
+
         return "\n\n".join(
             [
                 prev_block + f"REWARD THIS TURN: {self.last_reward}",
@@ -93,6 +110,14 @@ class Private_Sum_Observation(Observation):
                         f"  steps_remaining: {steps_remaining}",
                         f"  signal_modulus: {self.signal_modulus}",
                         f"  your_private_signal: {self.private_signal}",
+                    ]
+                ),
+                "\n".join(
+                    [
+                        "COMMUNICATION SUMMARY (this step):",
+                        f"  own_signal: {own_signal}",
+                        f"  received_signals: {received_signals_text}",
+                        f"  all_teammates_reported: {is_complete}",
                     ]
                 ),
                 "AVAILABLE ACTIONS:\n"

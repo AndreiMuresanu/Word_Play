@@ -48,6 +48,11 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         use_chain_of_thought: bool = False,
         conversation_memory_window: int = 12,
         observation_memory_window: int = 4,
+        action_max_new_tokens: int = 96,
+        message_max_new_tokens: int = 64,
+        reasoning_max_new_tokens: int = 256,
+        max_stored_observation_chars: int = 3000,
+        max_stored_message_chars: int = 320,
     ):
         super().__init__()
         self.model_key = model_key
@@ -58,6 +63,11 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         self.use_chain_of_thought = use_chain_of_thought
         self.conversation_memory_window = conversation_memory_window
         self.observation_memory_window = observation_memory_window
+        self.action_max_new_tokens = action_max_new_tokens
+        self.message_max_new_tokens = message_max_new_tokens
+        self.reasoning_max_new_tokens = reasoning_max_new_tokens
+        self.max_stored_observation_chars = max_stored_observation_chars
+        self.max_stored_message_chars = max_stored_message_chars
 
         self.observation_history: list[str] = []
         self.observation_summary: str | None = None
@@ -79,6 +89,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             reasoning = self.model.generate_text(
                 self._with_system(reasoning_prompt),
                 self.reasoning_generation_config,
+                max_new_tokens=self.reasoning_max_new_tokens,
             ).strip()
 
         selection_prompt = self._selection_prompt(observation, reasoning)
@@ -88,6 +99,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             raw = self.model.generate_text(
                 self._with_system(selection_prompt),
                 self.action_generation_config,
+                max_new_tokens=self.action_max_new_tokens,
             )
             try:
                 action_selection = self._parse_selection(raw, observation)
@@ -107,7 +119,8 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         )
 
     def _record_observation(self, observation: Observation) -> None:
-        self.observation_history.append(str(observation))
+        observation_text = self._truncate_text(str(observation), self.max_stored_observation_chars)
+        self.observation_history.append(observation_text)
         if len(self.observation_history) > self.observation_memory_window:
             overflow = self.observation_history[:-self.observation_memory_window]
             self._update_observation_summary(overflow)
@@ -185,10 +198,22 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         if not self.conversation_history:
             return ""
 
-        history_str = "\n".join(
-            f"- {entry['role']}: {entry['content']}"
-            for entry in self.conversation_history[-self.conversation_memory_window :]
-        )
+        relevant_entries = []
+        for entry in self.conversation_history[-self.conversation_memory_window :]:
+            role = entry.get("role")
+            if role == "user":
+                relevant_entries.append(
+                    f"- received: {self._truncate_text(entry['content'], self.max_stored_message_chars)}"
+                )
+            elif role == "system":
+                relevant_entries.append(
+                    f"- note: {self._truncate_text(entry['content'], self.max_stored_message_chars)}"
+                )
+
+        if not relevant_entries:
+            return ""
+
+        history_str = "\n".join(relevant_entries)
         return f"RECENT CONVERSATION:\n{history_str}\n\n"
 
     def _reasoning_prompt(self, observation: Observation) -> str:
@@ -339,13 +364,16 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         response = self.model.generate_text(
             self._with_system(prompt),
             self.message_generation_config,
+            max_new_tokens=self.message_max_new_tokens,
         ).strip()
+        response = self._truncate_text(response, self.max_stored_message_chars)
         self.conversation_history.append({"role": "assistant", "content": response})
         self._trim_history()
         return response
 
     def receive_message(self, message: str, sender: Entity, env: Environment) -> None:
-        self.conversation_history.append({"role": "user", "content": f"{sender.name}: {message}"})
+        message_text = self._truncate_text(message, self.max_stored_message_chars)
+        self.conversation_history.append({"role": "user", "content": f"{sender.name}: {message_text}"})
         self._trim_history()
 
     def end_conversation(
@@ -378,3 +406,10 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     def _trim_history(self) -> None:
         if len(self.conversation_history) > self.conversation_memory_window:
             self.conversation_history = self.conversation_history[-self.conversation_memory_window:]
+
+    def _truncate_text(self, text: str, max_chars: int) -> str:
+        if max_chars <= 0:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 14] + "... [truncated]"

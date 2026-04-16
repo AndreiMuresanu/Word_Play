@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -24,6 +25,13 @@ from word_play.presets.systems.communication.core import Communication_Policy
 
 def build_llm_policy(model_key: str) -> LLM_Action_And_Communication_Policy:
     return LLM_Action_And_Communication_Policy(model_key=model_key)
+
+
+def _extract_signal_value(message: str, signal_modulus: int) -> int | None:
+    match = re.search(r"-?\d+", message)
+    if not match:
+        return None
+    return int(match.group(0)) % signal_modulus
 
 
 def register_models(model_mode: str, num_agents: int) -> list[str]:
@@ -81,7 +89,9 @@ def build_human_agents(num_agents: int, signal_modulus: int) -> list[Entity]:
     return agents
 
 
-def run_private_conversation_step(participants: list[Entity], env: Private_Sum_Coordination, step_idx: int) -> None:
+def run_private_conversation_step(
+    participants: list[Entity], env: Private_Sum_Coordination, step_idx: int
+) -> dict[str, dict]:
     print(f"\n=== Step {step_idx} Private Messages ===")
     for participant in participants:
         participant.get_component(Communication_Policy).start_conversation(
@@ -89,30 +99,54 @@ def run_private_conversation_step(participants: list[Entity], env: Private_Sum_C
             env,
             info=(
                 "Coordinate this step using private messages only. "
-                "Share information that helps compute the team signal."
+                "Your outbound message must be a single integer in [0, signal_modulus - 1]."
             ),
         )
 
+    received_signals: dict[str, dict[str, int]] = {
+        participant.name: {} for participant in participants
+    }
     for speaker in participants:
         speaker_policy = speaker.get_component(Communication_Policy)
         speaker_signal = env.private_signal_for(speaker.name)
-        for recipient in participants:
-            if recipient is speaker:
-                continue
-            message = speaker_policy.send_message(
-                [recipient],
-                env,
-                info=(
-                    f"Current step: {step_idx}. "
-                    f"Your private signal is {speaker_signal}. "
-                    "Privately communicate what is needed for coordination."
-                ),
+        recipients = [recipient for recipient in participants if recipient is not speaker]
+        message = speaker_policy.send_message(
+            recipients,
+            env,
+            info=(
+                f"Current step: {step_idx}. "
+                f"Your private signal is {speaker_signal}. "
+                "Reply with one integer only."
+            ),
+        )
+        parsed_signal = _extract_signal_value(message, env.signal_modulus)
+        if parsed_signal is None:
+            parsed_signal = speaker_signal
+
+        canonical_message = str(parsed_signal)
+        for recipient in recipients:
+            print(f"{speaker.name} -> {recipient.name}: {canonical_message}")
+            recipient.get_component(Communication_Policy).receive_message(
+                canonical_message, speaker, env
             )
-            print(f"{speaker.name} -> {recipient.name}: {message}")
-            recipient.get_component(Communication_Policy).receive_message(message, speaker, env)
+            received_signals[recipient.name][speaker.name] = parsed_signal
 
     for participant in participants:
         participant.get_component(Communication_Policy).end_conversation(participants, env)
+
+    conversation_summary: dict[str, dict] = {}
+    expected_teammate_count = len(participants) - 1
+    for participant in participants:
+        own_signal = env.private_signal_for(participant.name)
+        teammate_signals = received_signals[participant.name]
+        is_complete = len(teammate_signals) == expected_teammate_count
+
+        conversation_summary[participant.name] = {
+            "own_signal": own_signal,
+            "received_signals": teammate_signals,
+            "is_complete": is_complete,
+        }
+    return conversation_summary
 
 
 def run_exp(
@@ -139,11 +173,16 @@ def run_exp(
 
     participants = env.agents
     for step_idx in range(max_steps):
+        conversation_summary: dict[str, dict] = {}
         if all(participant.has_component(Communication_Policy) for participant in participants):
-            run_private_conversation_step(participants, env, step_idx)
+            conversation_summary = run_private_conversation_step(participants, env, step_idx)
 
         cur_step_actions = []
         for agent_id, controlled_agent in enumerate(env.agents):
+            if controlled_agent.name in conversation_summary:
+                env.infos[agent_id]["communication_summary"] = conversation_summary[controlled_agent.name]
+            else:
+                env.infos[agent_id].pop("communication_summary", None)
             observation = env.observe(agent_id)
             action, info = controlled_agent.get_component(Agent_Policy).select_action(observation)
             print(f"[step {step_idx}] {controlled_agent.name} -> {action}")
