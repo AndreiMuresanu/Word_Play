@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from word_play.core import Entity
 
-    from .renderer import PygameRenderer, Renderable
+    from .renderer import Pygame_Renderer, Renderable
 
 
 def normalize_background_item(item: Any) -> dict[str, Any]:
@@ -20,7 +20,7 @@ def normalize_background_item(item: Any) -> dict[str, Any]:
 
 
 def world_bounds(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     background_items: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> tuple[int, int, int, int]:
@@ -45,7 +45,7 @@ def world_bounds(
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def screen_rect_for_tile(renderer: "PygameRenderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
+def screen_rect_for_tile(renderer: "Pygame_Renderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
     """Convert a world tile coordinate into the top-left screen pixel."""
     px = renderer.viewport_pad_w + (x - min_x) * renderer.tile_size
     py = renderer.viewport_pad_n + (max_y - y) * renderer.tile_size
@@ -62,7 +62,7 @@ def collect_wall_positions(background_items: list[dict[str, Any]]) -> set[tuple[
 
 
 def screen_position_for_entity(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     entity: "Entity",
     *,
     min_x: int,

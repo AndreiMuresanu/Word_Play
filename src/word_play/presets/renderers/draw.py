@@ -10,7 +10,6 @@ import pygame
 from word_play.core import Entity
 
 from .assets import get_or_load_image, get_scaled_image, resolve_wall_sprite
-from .fog_of_war import Fog_Of_War
 from .wall_geometry import collect_wall_positions, normalize_background_item, screen_position_for_entity, screen_rect_for_tile, wall_neighbor_mask, world_bounds
 from .renderer import Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size
@@ -18,7 +17,7 @@ from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_siz
 if TYPE_CHECKING:
     from word_play.core import Environment
 
-    from .renderer import PygameRenderer
+    from .renderer import Pygame_Renderer
 
 
 def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderable]]:
@@ -32,13 +31,13 @@ def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderabl
     return renderables
 
 
-def background_items(env: "Environment", renderer: "PygameRenderer") -> list[dict[str, Any]]:
+def background_items(env: "Environment", renderer: "Pygame_Renderer") -> list[dict[str, Any]]:
     """Fetch and normalize background tiles from the active layout adapter."""
     return [normalize_background_item(item) for item in renderer.layout.background(env)]
 
 
 def world_positions(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     background: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> list[tuple[int, int]]:
@@ -198,7 +197,7 @@ def entity_primary_stats(entity: Entity, env: "Environment" | None = None) -> li
     return component_stat_pairs(entity)[:4]
 
 
-def selected_card_metrics(renderer: "PygameRenderer", *, stat_count: int, inventory_line_count: int) -> dict[str, int]:
+def selected_card_metrics(renderer: "Pygame_Renderer", *, stat_count: int, inventory_line_count: int) -> dict[str, int]:
     """Derive all selected-entity card sizing from a shared tile-based scale."""
     base = max(56, int(renderer.tile_size))
     outer_pad = max(10, int(base * 0.18))
@@ -223,7 +222,7 @@ def selected_card_metrics(renderer: "PygameRenderer", *, stat_count: int, invent
     }
 
 
-def selected_entity(env: "Environment", renderer: "PygameRenderer") -> Entity | None:
+def selected_entity(env: "Environment", renderer: "Pygame_Renderer") -> Entity | None:
     """Return the entity currently selected in the renderer, if it still exists."""
     selected_name = getattr(renderer, "selected_entity_name", None)
     if not selected_name:
@@ -231,7 +230,7 @@ def selected_entity(env: "Environment", renderer: "PygameRenderer") -> Entity | 
     return next((entity for entity in env.state.entities if entity.name == selected_name), None)
 
 
-def update_damage_flash_state(renderer: "PygameRenderer", env: "Environment") -> None:
+def update_damage_flash_state(renderer: "Pygame_Renderer", env: "Environment") -> None:
     """Track recent health drops so damaged entities can flash briefly."""
     now = time.monotonic()
     active_names = {entity.name for entity in env.state.entities}
@@ -262,7 +261,7 @@ def update_damage_flash_state(renderer: "PygameRenderer", env: "Environment") ->
     renderer._last_health_values = next_health_values
 
 
-def entity_world_position(renderer: "PygameRenderer", entity: Entity) -> tuple[int, int] | None:
+def entity_world_position(renderer: "Pygame_Renderer", entity: Entity) -> tuple[int, int] | None:
     """Return an entity's tile position in renderer world coordinates."""
     position = getattr(entity, "position", None)
     if position is None:
@@ -272,7 +271,7 @@ def entity_world_position(renderer: "PygameRenderer", entity: Entity) -> tuple[i
 
 
 def update_camera_state(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     *,
     min_world_x: int,
@@ -291,46 +290,17 @@ def is_within_visible_bounds(x: int, y: int, min_x: int, max_x: int, min_y: int,
     return min_x <= x <= max_x and min_y <= y <= max_y
 
 
-def visible_tile_set(env: "Environment", renderer: "PygameRenderer") -> set[tuple[int, int]] | None:
+def visible_tile_set(env: "Environment", renderer: "Pygame_Renderer") -> set[tuple[int, int]] | None:
     """Return environment-level line-of-sight tiles when a focused agent is being inspected."""
-    focus_name = getattr(renderer, "camera_focus_entity_name", None)
-    if not focus_name:
+    if not getattr(renderer, "camera_focus_entity_name", None):
         return None
-
-    # Find the focused entity
-    focused_entity = None
-    for entity in getattr(env.state, "entities", []):
-        if entity.name == focus_name:
-            focused_entity = entity
-            break
-
-    if focused_entity is None:
+    visible_tiles_for = getattr(env, "visible_tiles_for", None)
+    if callable(visible_tiles_for):
+        return {tuple(tile) for tile in visible_tiles_for(renderer.camera_focus_entity_name)}
+    visible_tiles = getattr(env, "visible_tiles", None)
+    if not callable(visible_tiles):
         return None
-
-    # Get grid dimensions from environment
-    width = getattr(env, "width", None) or getattr(env, "current_room", None)
-    height = getattr(env, "height", None)
-    if width is None or height is None:
-        # Try to infer from room
-        room = getattr(env, "current_room", None)
-        if room is not None:
-            width = getattr(room, "width", None)
-            height = getattr(room, "height", None)
-    if width is None or height is None:
-        return None
-
-    # Get sight radius - prefer Renderable component, then environment, then renderer fallback
-    sight_radius = None
-    renderable = focused_entity.get_component(Renderable)
-    if renderable and renderable.sight_radius is not None:
-        sight_radius = renderable.sight_radius
-    else:
-        sight_radius = getattr(env, "sight_radius", None)
-    if sight_radius is None:
-        sight_radius = getattr(renderer, "camera_focus_radius_tiles", 6)
-
-    fog = Fog_Of_War(focused_entity, sight_radius)
-    return set(fog.visible_tiles(int(width), int(height)))
+    return {tuple(tile) for tile in visible_tiles()}
 
 
 def flash_tinted_surface(image: Any, *, tint: tuple[int, int, int], alpha: int) -> Any:
@@ -342,7 +312,7 @@ def flash_tinted_surface(image: Any, *, tint: tuple[int, int, int], alpha: int) 
     return tinted
 
 
-def draw_entity_shadow(renderer: "PygameRenderer", px: int, py: int) -> None:
+def draw_entity_shadow(renderer: "Pygame_Renderer", px: int, py: int) -> None:
     """Draw a soft ground shadow to give actors and props more depth."""
     shadow_width = max(14, int(renderer.tile_size * 0.72))
     shadow_height = max(8, int(renderer.tile_size * 0.24))
@@ -364,7 +334,7 @@ def animated_sprite_name(renderable: Renderable) -> str:
 
 
 def interpolated_entity_screen_position(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     entity: Entity,
     *,
     min_x: int,
@@ -394,7 +364,7 @@ def interpolated_entity_screen_position(
     return int(round(px)), int(round(py))
 
 
-def draw_focus_ring(renderer: "PygameRenderer", entity: Entity, px: int, py: int) -> None:
+def draw_focus_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int) -> None:
     """Highlight the focused agent so the camera mode is visually obvious."""
     if renderer.camera_focus_entity_name != entity.name:
         return
@@ -402,7 +372,7 @@ def draw_focus_ring(renderer: "PygameRenderer", entity: Entity, px: int, py: int
     pygame.draw.rect(renderer.effect_surface, renderer.focus_outline_color, ring_rect, width=3, border_radius=10)
 
 
-def draw_selection_ring(renderer: "PygameRenderer", entity: Entity, px: int, py: int) -> None:
+def draw_selection_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int) -> None:
     """Highlight the selected entity so inspection is visually anchored."""
     if getattr(renderer, "selected_entity_name", None) != entity.name:
         return
@@ -414,7 +384,7 @@ def draw_selection_ring(renderer: "PygameRenderer", entity: Entity, px: int, py:
 
 
 def draw_selected_entity_card(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     entity_positions: dict[str, tuple[int, int]],
 ) -> None:
@@ -552,7 +522,7 @@ def draw_selected_entity_card(
             text_y += metrics["text_line_height"]
 
 
-def draw_emissive_glow(renderer: "PygameRenderer", sprite_name: str, px: int, py: int, intensity: int) -> None:
+def draw_emissive_glow(renderer: "Pygame_Renderer", sprite_name: str, px: int, py: int, intensity: int) -> None:
     """Add a soft glow behind emissive sprites and props."""
     glow_size = int(renderer.tile_size * 1.5)
     glow = pygame.Surface((glow_size, glow_size), pygame.SRCALPHA)
@@ -566,7 +536,7 @@ def draw_emissive_glow(renderer: "PygameRenderer", sprite_name: str, px: int, py
 
 
 def blit_scaled_sprite(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     sprite_name: str,
     px: int,
     py: int,
@@ -597,7 +567,7 @@ def blit_scaled_sprite(
     return True
 
 
-def draw_wall_sprite(renderer: "PygameRenderer", wall_set: str, px: int, py: int, neighbors: dict[str, bool]) -> bool:
+def draw_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, px: int, py: int, neighbors: dict[str, bool]) -> bool:
     """Draw a wall tile using the best matching sprite variant."""
     sprite_name = resolve_wall_sprite(renderer, wall_set, neighbors)
     if sprite_name is None:
@@ -615,7 +585,7 @@ def draw_wall_sprite(renderer: "PygameRenderer", wall_set: str, px: int, py: int
 
 
 def draw_wall_background_tile(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     item: dict[str, Any],
     px: int,
     py: int,
@@ -635,7 +605,7 @@ def draw_wall_background_tile(
 
 
 def draw_overlay_item(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     sprite_name: str,
     px: int,
     py: int,
@@ -667,7 +637,52 @@ def draw_overlay_item(
     )
 
 
-def draw_entity(renderer: "PygameRenderer", entity: Entity, renderable: Renderable, px: int, py: int) -> None:
+def draw_container_overlay(
+    renderer: "Pygame_Renderer",
+    container: Any,
+    px: int,
+    py: int,
+) -> None:
+    """Draw up to 4 container items in a 2x2 grid with optional ellipsis."""
+    visible_items = container.visible_contents()[:4]
+    if not visible_items:
+        return
+
+    grid_size = 2
+    item_size = max(16, int(renderer.tile_size * 0.45))
+    gap = max(2, int(renderer.tile_size * 0.05))
+    total_size = grid_size * item_size + (grid_size - 1) * gap
+    start_x = px + (renderer.tile_size - total_size) // 2
+    start_y = py + (renderer.tile_size - total_size) // 2
+
+    for idx, item in enumerate(visible_items[:4]):
+        row = idx // 2
+        col = idx % 2
+        item_px = start_x + col * (item_size + gap)
+        item_py = start_y + row * (item_size + gap)
+
+        item_renderable = item.get_component(Renderable)
+        if item_renderable is not None:
+            blit_scaled_sprite(
+                renderer,
+                item_renderable.sprite_path,
+                item_px,
+                item_py,
+                width=item_size,
+                height=item_size,
+                anchor="top_left",
+            )
+
+    # Draw ellipsis if more than 4 items
+    total_items = len(container.visible_contents())
+    if total_items > 4:
+        ellipsis_x = start_x + total_size + gap
+        ellipsis_y = start_y + total_size - item_size // 2
+        ellipsis_surface = renderer.small_font.render("...", True, (200, 200, 200))
+        renderer.effect_surface.blit(ellipsis_surface, (ellipsis_x, ellipsis_y))
+
+
+def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Renderable, px: int, py: int) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
     sprite_name = animated_sprite_name(renderable)
     image = get_or_load_image(renderer, sprite_name)
@@ -711,6 +726,17 @@ def draw_entity(renderer: "PygameRenderer", entity: Entity, renderable: Renderab
         finally:
             renderer.world_surface = previous_world_surface
 
+    # Check if entity has a Container component that should be rendered
+    from word_play.presets.systems.containers import Container
+    container = entity.get_component(Container)
+    if container is not None and container.is_open:
+        previous_world_surface = renderer.world_surface
+        renderer.world_surface = renderer.effect_surface
+        try:
+            draw_container_overlay(renderer, container, px, py)
+        finally:
+            renderer.world_surface = previous_world_surface
+
     emissive_sprite = getattr(renderable, "emissive_sprite", None)
     if emissive_sprite:
         draw_emissive_glow(renderer, emissive_sprite, px, py, int(getattr(renderable, "emissive_intensity", 84)))
@@ -736,7 +762,7 @@ def draw_entity(renderer: "PygameRenderer", entity: Entity, renderable: Renderab
 
 
 def draw_hit_effects(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     entity_positions: dict[str, tuple[int, int]],
 ) -> None:
@@ -783,7 +809,7 @@ def draw_hit_effects(
 
 
 def draw_background_tile(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     item: dict[str, Any],
     px: int,
     py: int,
@@ -810,7 +836,7 @@ def draw_background_tile(
     )
 
 
-def draw_grid_overlay(renderer: "PygameRenderer", min_x: int, max_x: int, min_y: int, max_y: int) -> None:
+def draw_grid_overlay(renderer: "Pygame_Renderer", min_x: int, max_x: int, min_y: int, max_y: int) -> None:
     """Draw grid lines over the world area for debugging or readability."""
     overlay_color = (30, 30, 34)
     for x in range(min_x, max_x + 2):
@@ -825,7 +851,7 @@ def draw_grid_overlay(renderer: "PygameRenderer", min_x: int, max_x: int, min_y:
 
 
 def draw_visibility_mask(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     visible_tiles: set[tuple[int, int]] | None,
     min_x: int,
     max_y: int,
@@ -856,7 +882,7 @@ def draw_visibility_mask(
                 renderer.effect_surface.blit(veil, rect.topleft)
 
 
-def draw_hud_panel(renderer: "PygameRenderer", env: "Environment", x_offset: int, width: int, height: int) -> None:
+def draw_hud_panel(renderer: "Pygame_Renderer", env: "Environment", x_offset: int, width: int, height: int) -> None:
     """Render the bottom HUD panel with header text and recent messages."""
     if getattr(env, "hide_bottom_hud", False):
         return
@@ -915,7 +941,7 @@ def draw_hud_panel(renderer: "PygameRenderer", env: "Environment", x_offset: int
             renderer.screen.blit(surface, (x_offset + renderer.margin, row_y))
 
 
-def draw_sidebar_panel(renderer: "PygameRenderer", env: "Environment", world_width: int, height: int, sidebar_width: int) -> None:
+def draw_sidebar_panel(renderer: "Pygame_Renderer", env: "Environment", world_width: int, height: int, sidebar_width: int) -> None:
     """Render an optional right-hand sidebar with agent observations and options."""
     if sidebar_width <= 0:
         return
@@ -983,7 +1009,7 @@ def draw_sidebar_panel(renderer: "PygameRenderer", env: "Environment", world_wid
             action_y += line_height
 
 
-def draw_end_overlay(renderer: "PygameRenderer", env: "Environment", world_x: int, world_width: int, world_height: int) -> None:
+def draw_end_overlay(renderer: "Pygame_Renderer", env: "Environment", world_x: int, world_width: int, world_height: int) -> None:
     """Draw a centered overlay when the environment reaches a terminal state."""
     terminations = list(getattr(env, "terminations", []))
     truncations = list(getattr(env, "truncations", []))
@@ -1024,7 +1050,7 @@ def draw_end_overlay(renderer: "PygameRenderer", env: "Environment", world_x: in
     renderer.screen.blit(subtitle_surface, (subtitle_x, box_y + 24 + title_surface.get_height() + 12))
 
 
-def draw_world_vignette(renderer: "PygameRenderer", world_x: int, world_width: int, world_height: int) -> None:
+def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: int, world_height: int) -> None:
     """Apply a subtle darkening toward the edges of the world view."""
     cache_key = (world_width, world_height)
     overlay = renderer._vignette_cache.get(cache_key)
@@ -1085,7 +1111,7 @@ def fit_wrapped_text_lines(
 
 
 def draw_speech_bubbles(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     entity_positions: dict[str, tuple[int, int]],
 ) -> None:
@@ -1154,7 +1180,7 @@ def draw_speech_bubbles(
             text_y += surface.get_height() + line_gap
 
 
-def render_environment(renderer: "PygameRenderer", env: "Environment") -> None:
+def render_environment(renderer: "Pygame_Renderer", env: "Environment") -> None:
     """Render a full frame including background, entities, effects, and HUD."""
     renderer.layout.prepare_env(env)
     update_damage_flash_state(renderer, env)

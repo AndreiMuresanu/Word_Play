@@ -9,6 +9,20 @@ from word_play.presets.action_validations import Target_Has_Tag
 from word_play.presets.systems.inventory import Inventory, Inventory_Item_Index_Arg
 
 
+class Any_Item_Valid:
+    """Item validator that accepts any item."""
+
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment, item: Entity) -> bool:
+        return True
+
+
+class Zero_Reward:
+    """Reward function that always returns 0."""
+
+    def __call__(self, actor: Entity, target_entity: Entity, env: Environment, item: Entity) -> float:
+        return 0.0
+
+
 @dataclass(slots=True)
 class Front_Order_Match:
     order_attr: str = "order_queue"
@@ -60,7 +74,7 @@ class Deliver_Item(Action):
     def __init__(
         self,
         target_tags: list[str],
-        item_is_valid: Callable[[Entity, Entity, Environment, Entity], bool],
+        item_is_valid: Callable[[Entity, Entity, Environment, Entity], bool] | None = None,
         reward_for_item: Callable[[Entity, Entity, Environment, Entity], float] | None = None,
         on_delivered: Callable[[Entity, Entity, Environment, Entity, float], None] | None = None,
     ):
@@ -73,8 +87,8 @@ class Deliver_Item(Action):
             required_kwargs={"inventory index": Inventory_Item_Index_Arg()},
         )
         self.target_tags = target_tags
-        self.item_is_valid = item_is_valid
-        self.reward_for_item = reward_for_item or (lambda actor, target, env, item: 0.0)
+        self.item_is_valid = item_is_valid or Any_Item_Valid()
+        self.reward_for_item = reward_for_item or Zero_Reward()
         self.on_delivered = on_delivered
 
     def is_valid(
@@ -85,7 +99,7 @@ class Deliver_Item(Action):
         inventory = actor.get_component(Inventory)
         if inventory is None:
             return False
-        if kwargs in {"unconsidered", None}:
+        if kwargs == "unconsidered" or kwargs is None:
             return True
         item = inventory.inventory[int(kwargs["inventory index"])]
         return self.item_is_valid(actor, target_entity, env, item)

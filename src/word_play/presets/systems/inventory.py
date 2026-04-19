@@ -17,17 +17,6 @@ from word_play.core import (
 from word_play.presets.action_validations import Target_Doesnt_Have_Tag, Target_Has_Component, Target_Has_Tag
 
 
-def _remove_from_containers(env: Environment, item: Entity) -> bool:
-    """Remove item from any Container that holds it. Returns True if found."""
-    from word_play.presets.systems.containers import Container
-    for entity in env.state.entities:
-        container = entity.get_component(Container)
-        if container is not None and item in container.contents:
-            container.remove_item(item)
-            return True
-    return False
-
-
 class Room_In_Inventory(Action_Validation):
     def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
         inventory_comp = actor.get_component(Inventory)
@@ -87,8 +76,6 @@ class Pick_Up_Item(Action):
         holder = container_holding_item(env, target_entity)
         if holder is not None:
             holder.stored_item = None
-        # Also remove from Container if applicable
-        _remove_from_containers(env, target_entity)
         if "in_container" in target_entity.tags:
             target_entity.tags.remove("in_container")
         target_entity.tags.append("in_inventory")
@@ -172,6 +159,10 @@ class Put_In_Container(Action):
         if "in_container" not in item.tags:
             item.tags.append("in_container")
         item.position = deepcopy(target_entity.position)
+
+        # Ensure the item is in the environment so it can be interacted with
+        if item not in env.state.entities:
+            env.instantiate_entity(item)
         holder.stored_item = item
         return {"stored_item": item.name}
 

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "Word_Play-dev copy",
+			"path": "."
+		},
+		{
+			"name": "sprite_library",
+			"path": "../Word_Play/sprite_library"
+		}
+	],
+	"settings": {}
+}

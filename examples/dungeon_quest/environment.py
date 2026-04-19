@@ -1,7 +1,4 @@
 """Dungeon quest environment - Simple open arena with enemies."""
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
 
 from word_play.core import Entity, Environment, Observation
 from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
@@ -21,9 +18,6 @@ from word_play.presets.observation.simple_observation import Simple_Observation
 from word_play.presets.renderers import Renderable
 from word_play.presets.reward_functions import zero_reward_func
 from word_play.presets.systems import Attack, Do_Nothing, Health
-
-if TYPE_CHECKING:
-    from word_play.core import Action_Selection
 
 
 PLAYER_SPRITE = "src/characters/humanoids/human/farmer_man.png"
@@ -66,7 +60,7 @@ class DungeonRaidEnv(Simple_Env_Reset_Mixin, Environment):
         self.wall_set = WALL_SET
         self.floor_sprite = FLOOR_SPRITE
 
-        # Player at entry (moved closer to center so enemies are visible)
+                # Player at entry (moved closer to center so enemies are visible)
         self.player = Entity(
             name="Raider",
             position=Position_2D(4, 5),
@@ -82,7 +76,7 @@ class DungeonRaidEnv(Simple_Env_Reset_Mixin, Environment):
             components=[
                 Health(max_health=15, starting_health=15),
                 Collidable(collidable_tags=["wall", "enemy"]),
-                Renderable(sprite_path=PLAYER_SPRITE, z_index=10),
+                Renderable(sprite_path=PLAYER_SPRITE, z_index=10, sight_radius=4),
             ],
         )
         self.player.is_agent = True

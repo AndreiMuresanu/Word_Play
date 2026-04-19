@@ -7,20 +7,14 @@ from word_play.presets.action_validations import Target_Has_Component
 from word_play.presets.renderers import Renderable
 
 
-def container_comp(entity: Entity) -> "Container | None":
+def _container_comp(entity: Entity) -> "Container | None":
     return entity.get_component(Container)
 
 
-def set_container_item_visibility(item: Entity, *, visible: bool) -> None:
+def _set_container_item_visibility(item: Entity, *, visible: bool) -> None:
     renderable = item.get_component(Renderable)
     if renderable is not None:
         renderable.visible = visible
-    else:
-        import warnings
-        warnings.warn(
-            f"Entity '{item.name}' (id={id(item)}) is missing Renderable component; "
-            f"cannot set visibility to {visible}"
-        )
 
 
 class Container(Component):
@@ -48,7 +42,7 @@ class Container(Component):
         for item in self.contents:
             if "hidden_in_container" in item.tags:
                 item.tags.remove("hidden_in_container")
-            set_container_item_visibility(item, visible=True)
+            _set_container_item_visibility(item, visible=True)
 
     def remove_item(self, item: Entity) -> bool:
         """Remove an item from this container's contents. Returns True if removed."""
@@ -69,7 +63,7 @@ class Container(Component):
                     item.tags.remove("hidden_in_container")
             elif "hidden_in_container" not in item.tags:
                 item.tags.append("hidden_in_container")
-            set_container_item_visibility(item, visible=self.is_open)
+            _set_container_item_visibility(item, visible=self.is_open)
             if item not in env.state.entities:
                 env.instantiate_entity(item)
 
@@ -89,11 +83,11 @@ class Open_Container(Action):
     ) -> bool:
         if not super().is_valid(actor, target_entity, env, kwargs=kwargs):
             return False
-        container = container_comp(target_entity)
+        container = _container_comp(target_entity)
         return container is not None and not container.is_open
 
     def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
-        container = container_comp(target_entity)
+        container = _container_comp(target_entity)
         assert container is not None
         container.reveal_contents()
         return {"opened": True, "revealed_items": [item.name for item in container.visible_contents()]}

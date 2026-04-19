@@ -112,8 +112,25 @@ class Move_Down(Action):
         return "Move down."
 
 
+def positions_are_adjacent_2d(position_a: Position, position_b: Position) -> bool:
+    """
+    Return True when two 2D positions are equal or orthogonally adjacent.
+
+    This is the standard "nearby" check for grid-based interactions:
+    - Same position (0 distance)
+    - Orthogonally adjacent (1 step in any cardinal direction)
+    """
+    if not isinstance(position_a, Position_2D) or not isinstance(position_b, Position_2D):
+        return False
+    manhattan_distance = abs(position_a.x - position_b.x) + abs(position_a.y - position_b.y)
+    return manhattan_distance <= 1
+
+
+# Note: positions_are_close is used by Target_Is_Nearby to determine if an entity
+# can be interacted with. Using adjacency (distance <= 1) allows interacting with
+# things on the same tile OR in immediately adjacent tiles.
 INFINITE_2D_MOVEMENT_SYSTEM = Movement_System(
     position_type=Position_2D,
     movement_options=[Move_Left(), Move_Right(), Move_Up(), Move_Down()],
-    positions_are_close=positions_are_close_if_equal,
+    positions_are_close=positions_are_adjacent_2d,
 )

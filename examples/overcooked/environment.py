@@ -1,12 +1,8 @@
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
-from word_play.core import (
-    Action_Selection,
-    Entity,
-    Environment,
-)
+from word_play.core import Entity, Environment
+from word_play.core.actions import Action_Selection
+from word_play.core.components import Non_Agent_Policy
+from word_play.presets.action_policies.overcooked_preview_policy import EXPEDITER_SEQUENCE, PREP_COOK_SEQUENCE
+from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 from word_play.presets.entity_orderings import entity_definition_order
 from word_play.presets.environments.simple_env_reset_mixin import Simple_Env_Reset_Mixin
 from word_play.presets.movement import Move_Down, Move_Left, Move_Right, Move_Up
@@ -16,39 +12,23 @@ from word_play.presets.observation import Simple_Observation
 from word_play.presets.renderers import Renderable
 from word_play.presets.systems.communication import Start_Public_Conversation
 from word_play.presets.systems import (
+    Crafter,
+    Crafter_Recipe,
+    Collect_From_Crafter,
     Deliver_Item,
     Dispense_From_Infinite_Source,
     Do_Nothing,
     Front_Order_Match,
     Infinite_Item_Source,
     Inventory,
-    Item_Crafter,
-    Item_Crafter_Recipe,
-    Load_Item_Crafter,
+    Load_Crafter,
     Named_Item_Reward,
     Pick_Up_Item,
     Put_In_Container,
     Record_Delivery,
     Single_Item_Holder,
 )
-
-if TYPE_CHECKING:
-    from word_play.presets.renderers import Renderer
-
-
-ASCII_KITCHEN = """
-#############
-#     #     #
-# F   u   D #
-#     #     #
-# A C # S E #
-#     #     #
-# T   l   P #
-#   N # L W #
-#############
-"""
-
-OVERCOOKED_WALL_SET = "src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall"
+from word_play.presets.renderers import Renderer
 
 
 def team_reward(action_selections: list[Action_Selection], env: Environment) -> list[float]:
@@ -70,11 +50,12 @@ class OvercookedKitchenEnv(Simple_Env_Reset_Mixin, Environment):
         Pick_Up_Item(["collectable"]),
         Dispense_From_Infinite_Source(),
         Put_In_Container(),
-        Load_Item_Crafter(),
+        Load_Crafter(),
+        Collect_From_Crafter(),
         Deliver_Item(
             target_tags=["serve"],
             item_is_valid=Front_Order_Match(),
-            reward_for_item=Named_Item_Reward({"garden_skillet": 24.0}, default_reward=10.0),
+            reward_for_item=Named_Item_Reward({"steak": 24.0}, default_reward=10.0),
             on_delivered=Record_Delivery(
                 score_attr="score",
                 step_score_attr="step_score_delta",
@@ -92,239 +73,167 @@ class OvercookedKitchenEnv(Simple_Env_Reset_Mixin, Environment):
         self.renderer_impl = renderer
         self.episode_length = episode_length
         self.width = 13
-        self.height = 9
-        self.wall_set = OVERCOOKED_WALL_SET
+        self.height = 7
+        self.wall_set = "src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall"
+        self.floor_sprite = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
         self.tick = 0
         self.score = 0
         self.deliveries = 0
         self.step_score_delta = 0
         self.sight_radius = 4
-        self.order_queue = ["garden_skillet", "garden_skillet"]
+        self.order_queue = ["steak", "steak"]
         self.event_log = ["Cook two garden skillets and serve them."]
-        tomato_counter = Entity(
-            name="Tomato Counter",
-            position=Position_2D(1, 6),
+
+        # Tomato source (1,5) - adjacent to Prep Cook starting at (1,3)
+        tomato_source = Entity(
+            name="Tomato Source",
+            position=Position_2D(1, 5),
             tags=["blocker", "station", "source"],
             components=[
                 Infinite_Item_Source(
-                    Entity(
-                        name="tomato",
-                        position=Position_2D(0, 0),
-                        tags=["collectable", "ingredient", "raw_food"],
-                        components=[Renderable(sprite_path="src/items/consumables/vegetables/tomato_2.png", z_index=2)],
-                    )
+                    Entity(name="tomato", position=Position_2D(0, 0),
+                           tags=["collectable", "ingredient", "raw_food"],
+                           components=[Renderable(sprite_path="src/items/consumables/vegetables/tomato_2.png", z_index=2)]),
                 ),
                 Collidable(collidable_tags=["blocker"]),
                 Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_7.png",
-                    z_index=4,
-                    overlay_sprite="src/items/consumables/vegetables/tomato_2.png",
-                    overlay_mode="center",
-                    overlay_scale=0.42,
-                ),
+                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/cabnet_00.png", z_index=4,
+                    overlay_sprite="src/items/consumables/vegetables/tomato_2.png", overlay_mode="center", overlay_scale=0.42),
             ],
         )
-        protein_fridge = Entity(
-            name="Protein Fridge",
+
+        # Protein source (1,2)
+        protein_source = Entity(
+            name="Protein Source",
             position=Position_2D(1, 2),
             tags=["blocker", "station", "source"],
             components=[
                 Infinite_Item_Source(
-                    Entity(
-                        name="protein",
-                        position=Position_2D(0, 0),
-                        tags=["collectable", "ingredient", "raw_food"],
-                        components=[Renderable(sprite_path="src/items/consumables/meat/steak_2.png", z_index=2)],
-                    )
+                    Entity(name="protein", position=Position_2D(0, 0),
+                           tags=["collectable", "ingredient", "raw_food"],
+                           components=[Renderable(sprite_path="src/items/consumables/meat/steak_2.png", z_index=2)]),
                 ),
                 Collidable(collidable_tags=["blocker"]),
                 Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/fridge.png",
-                    z_index=4,
-                    overlay_sprite="src/items/consumables/meat/steak_2.png",
-                    overlay_mode="center",
-                    overlay_scale=0.42,
-                ),
+                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/fridge.png", z_index=4,
+                    overlay_sprite="src/items/consumables/meat/steak_2.png", overlay_mode="center", overlay_scale=0.42),
             ],
         )
+
+        # Plate stack (9,5)
         plate_stack = Entity(
             name="Plate Stack",
-            position=Position_2D(9, 6),
+            position=Position_2D(9, 5),
             tags=["blocker", "station", "source"],
             components=[
                 Infinite_Item_Source(
-                    Entity(
-                        name="plate",
-                        position=Position_2D(0, 0),
-                        tags=["collectable", "plate"],
-                        components=[Renderable(sprite_path="src/items/equipment/armor/mirror_plate.png", z_index=2)],
-                    )
+                    Entity(name="plate", position=Position_2D(0, 0),
+                           tags=["collectable", "plate"],
+                           components=[Renderable(sprite_path="src/items/consumables/misc_food/plate_stack.png", z_index=2)]),
                 ),
                 Collidable(collidable_tags=["blocker"]),
                 Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_7.png",
-                    z_index=4,
-                    overlay_sprite="src/items/equipment/armor/mirror_plate.png",
-                    overlay_mode="center",
-                    overlay_scale=0.42,
-                ),
+                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_6.png", z_index=4,
+                    overlay_sprite="src/items/consumables/misc_food/plate_stack.png", overlay_mode="center", overlay_scale=0.42),
             ],
         )
+
+        # Chopping board (5,2) - center
         chopping_board = Entity(
             name="Chopping Board",
-            position=Position_2D(3, 4),
+            position=Position_2D(5, 2),
             tags=["blocker", "station", "crafter"],
             components=[
-                Item_Crafter(
-                    recipes=[
-                        Item_Crafter_Recipe(
-                            ("tomato",),
-                            Entity(
-                                name="chopped_tomato",
-                                position=Position_2D(0, 0),
-                                tags=["collectable", "ingredient", "prepared_food"],
-                                components=[Renderable(sprite_path="src/items/consumables/misc_food/tomato_chopped.png", z_index=2)],
-                            ),
-                        ),
-                        Item_Crafter_Recipe(
-                            ("protein",),
-                            Entity(
-                                name="chopped_protein",
-                                position=Position_2D(0, 0),
-                                tags=["collectable", "ingredient", "prepared_food"],
-                                components=[Renderable(sprite_path="src/items/consumables/misc_food/protein_chopped.png", z_index=2)],
-                            ),
-                        ),
-                    ]
-                ),
+                Crafter(recipes=[
+                    Crafter_Recipe(("tomato",), Entity(name="chopped_tomato", position=Position_2D(0, 0),
+                           tags=["collectable", "ingredient", "prepared_food"],
+                           components=[Renderable(sprite_path="sprite_library/src/items/consumables/misc_food/tomato_chopped.png", z_index=2)])),
+                    Crafter_Recipe(("protein",), Entity(name="chopped_protein", position=Position_2D(0, 0),
+                           tags=["collectable", "ingredient", "prepared_food"],
+                           components=[Renderable(sprite_path="sprite_library/src/items/consumables/misc_food/protein_chopped.png", z_index=2)])),
+                ]),
                 Collidable(collidable_tags=["blocker"]),
-                Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_6.png",
-                    z_index=4,
-                    overlay_sprite="src/items/materials/misc/board_c.png",
-                    overlay_mode="center",
-                    overlay_scale=0.56,
-                ),
+                Renderable(sprite_path="sprite_library/src/world_tiles/indoors/stations/chopping_board.png", z_index=4),
             ],
         )
+
+        # Stove (8,2) - right of center
         stove = Entity(
             name="Stove",
-            position=Position_2D(7, 4),
+            position=Position_2D(8, 2),
             tags=["blocker", "station", "crafter", "stove"],
             components=[
-                Item_Crafter(
-                    recipes=[
-                        Item_Crafter_Recipe(
-                            input_names=("chopped_tomato", "chopped_protein"),
-                            output=Entity(
-                                name="garden_skillet",
-                                position=Position_2D(0, 0),
-                                tags=["collectable", "dish", "prepared_food"],
-                                components=[Renderable(sprite_path="src/items/consumables/misc_food/garden_skillet_dish.png", z_index=2)],
-                            ),
-                            duration=2,
-                        )
-                    ]
-                ),
+                Crafter(recipes=[
+                    Crafter_Recipe(
+                        input_names=("chopped_protein",),
+                output=Entity(name="steak", position=Position_2D(0, 0),
+                               tags=["collectable", "dish", "prepared_food"],
+                components=[Renderable(sprite_path="sprite_library/src/items/consumables/meat/steak_2.png", z_index=2)]),
+                        duration=2,
+                    )
+                ]),
                 Collidable(collidable_tags=["blocker"]),
-                Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/stove_00.png",
-                    z_index=4,
-                    overlay_sprite="src/items/materials/misc/pot.png",
-                    overlay_mode="center",
-                    overlay_scale=0.58,
-                ),
+                Renderable(sprite_path="sprite_library/src/world_tiles/indoors/stations/cooking_station.png", z_index=4),
             ],
         )
+
+        # Pass counter (5,4) - shared middle area
+        pass_counter = Entity(
+            name="Pass Counter",
+            position=Position_2D(5, 4),
+            tags=["blocker", "station", "counter"],
+            components=[
+                Single_Item_Holder(accepted_item_tags=["ingredient", "prepared_food", "dish", "plate"]),
+                Collidable(collidable_tags=["blocker"]),
+                Renderable(sprite_path="sprite_library/src/world_tiles/indoors/stations/kitchen_counter.png", z_index=4),
+            ],
+        )
+
+        # Delivery (8,1)
         delivery_hatch = Entity(
             name="Delivery Hatch",
-            position=Position_2D(9, 2),
+            position=Position_2D(8, 1),
             tags=["blocker", "station", "serve"],
             components=[
                 Collidable(collidable_tags=["blocker"]),
-                Renderable(sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/cabnet_00.png", z_index=4),
+                Renderable(sprite_path="sprite_library/src/world_tiles/indoors/stations/delivery_window.png", z_index=4),
             ],
         )
-        north_pass_counter = Entity(
-            name="North Pass Counter",
-            position=Position_2D(4, 7),
-            tags=["blocker", "station", "counter"],
-            components=[
-                Single_Item_Holder(accepted_item_tags=["ingredient", "prepared_food", "dish", "plate"]),
-                Collidable(collidable_tags=["blocker"]),
-                Renderable(sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_6.png", z_index=4),
-            ],
-        )
-        lower_plate_pass = Entity(
-            name="Lower Plate Pass",
-            position=Position_2D(8, 7),
-            tags=["blocker", "station", "counter"],
-            components=[
-                Single_Item_Holder(accepted_item_tags=["ingredient", "prepared_food", "dish", "plate"]),
-                Collidable(collidable_tags=["blocker"]),
-                Renderable(
-                    sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/cabnet_01.png",
-                    z_index=4,
-                    overlay_sprite="src/items/equipment/armor/mirror_plate.png",
-                    overlay_mode="center",
-                    overlay_scale=0.42,
-                ),
-            ],
-        )
-        upper_divider_table = Entity(
-            name="Upper Divider Table",
-            position=Position_2D(5, 2),
-            tags=["blocker", "station", "counter"],
-            components=[
-                Single_Item_Holder(accepted_item_tags=["ingredient", "prepared_food", "dish", "plate"]),
-                Collidable(collidable_tags=["blocker"]),
-                Renderable(sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_6.png", z_index=4),
-            ],
-        )
-        lower_divider_table = Entity(
-            name="Lower Divider Table",
-            position=Position_2D(5, 6),
-            tags=["blocker", "station", "counter"],
-            components=[
-                Single_Item_Holder(accepted_item_tags=["ingredient", "prepared_food", "dish", "plate"]),
-                Collidable(collidable_tags=["blocker"]),
-                Renderable(sprite_path="src/world_tiles/indoors/appliances/PokemonGen2/table_6.png", z_index=4),
-            ],
-        )
+
+        # Prep Cook starts at (1,3)
         prep_cook = Entity(
             name="Prep Cook",
-            position=Position_2D(1, 4),
+            position=Position_2D(1, 3),
             tags=["agent", "chef"],
             actions=list(self.AGENT_ACTIONS),
             components=[
-                Inventory(collectable_tags=["collectable"], inventory_size=1),
+                Inventory(collectable_tags=["collectable"], inventory_size=2),
                 Collidable(collidable_tags=["blocker"]),
                 Renderable(sprite_path="src/characters/humanoids/human/farmer_man.png", z_index=10),
             ],
         )
         prep_cook.is_agent = True
+
+        # Expediter starts at (9,3)
         expediter = Entity(
             name="Expediter",
-            position=Position_2D(9, 4),
+            position=Position_2D(9, 3),
             tags=["agent", "chef"],
             actions=list(self.AGENT_ACTIONS),
             components=[
-                Inventory(collectable_tags=["collectable"], inventory_size=1),
+                Inventory(collectable_tags=["collectable"], inventory_size=2),
                 Collidable(collidable_tags=["blocker"]),
                 Renderable(sprite_path="src/characters/humanoids/dwarven/gnome_wizard.png", z_index=10),
             ],
         )
         expediter.is_agent = True
+
+        # Walls - simple box, no center divider
         self.wall_positions = {
             (0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0), (6, 0), (7, 0), (8, 0), (9, 0), (10, 0), (11, 0), (12, 0),
-            (0, 1), (6, 1), (12, 1),
-            (0, 2), (6, 2), (12, 2),
-            (0, 3), (6, 3), (12, 3),
-            (0, 4), (6, 4), (12, 4),
-            (0, 5), (6, 5), (12, 5),
-            (0, 6), (6, 6), (12, 6),
-            (0, 7), (6, 7), (12, 7),
-            (0, 8), (1, 8), (2, 8), (3, 8), (4, 8), (5, 8), (6, 8), (7, 8), (8, 8), (9, 8), (10, 8), (11, 8), (12, 8),
+            (0, 6), (1, 6), (2, 6), (3, 6), (4, 6), (5, 6), (6, 6), (7, 6), (8, 6), (9, 6), (10, 6), (11, 6), (12, 6),
+            (0, 1), (0, 2), (0, 3), (0, 4), (0, 5),
+            (12, 1), (12, 2), (12, 3), (12, 4), (12, 5),
         }
         walls = [
             Entity(
@@ -333,31 +242,15 @@ class OvercookedKitchenEnv(Simple_Env_Reset_Mixin, Environment):
                 tags=["blocker", "wall"],
                 components=[
                     Collidable(collidable_tags=["blocker"]),
-                    Renderable(
-                        sprite_path="src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall/overcooked_kitchen_wall_center.png",
-                        visible=False,
-                    ),
+                    Renderable(sprite_path="src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall/overcooked_kitchen_wall_center.png", visible=False),
                 ],
             )
             for x, y in sorted(self.wall_positions)
         ]
         super().__init__(
-            description="A small preset-based kitchen example.",
-            entities=[
-                prep_cook,
-                expediter,
-                tomato_counter,
-                protein_fridge,
-                plate_stack,
-                chopping_board,
-                stove,
-                delivery_hatch,
-                north_pass_counter,
-                lower_plate_pass,
-                upper_divider_table,
-                lower_divider_table,
-                *walls,
-            ],
+            description="A kitchen with two chefs working together.",
+            entities=[prep_cook, expediter, protein_source,
+                      chopping_board, stove, pass_counter, delivery_hatch, *walls],
             movement_system=INFINITE_2D_MOVEMENT_SYSTEM,
             reward_func=team_reward,
             entity_order=entity_definition_order,
@@ -378,24 +271,6 @@ class OvercookedKitchenEnv(Simple_Env_Reset_Mixin, Environment):
             info=self.infos[agent_id],
         )
 
-    def visible_tiles_for(self, agent_name: str) -> list[tuple[int, int]]:
-        agent = next((entity for entity in self.agents if entity.name == agent_name), None)
-        if agent is None:
-            return []
-        center_x = int(agent.position.x)
-        center_y = int(agent.position.y)
-        visible: list[tuple[int, int]] = []
-        for y in range(max(0, center_y - self.sight_radius), min(self.height - 1, center_y + self.sight_radius) + 1):
-            for x in range(max(0, center_x - self.sight_radius), min(self.width - 1, center_x + self.sight_radius) + 1):
-                if abs(x - center_x) + abs(y - center_y) <= self.sight_radius:
-                    visible.append((x, y))
-        return visible
-
-    def visible_tiles(self) -> list[tuple[int, int]]:
-        if not self.agents:
-            return []
-        return self.visible_tiles_for(self.agents[0].name)
-
     def environment_start_of_step(self, action_selections: list[Action_Selection]) -> None:
         self.tick += 1
         self.step_score_delta = 0
@@ -406,6 +281,5 @@ class OvercookedKitchenEnv(Simple_Env_Reset_Mixin, Environment):
         if self.tick >= self.episode_length:
             self.truncations = [True] * len(self.agents)
 
-__all__ = [
-    "OvercookedKitchenEnv",
-]
+
+__all__ = ["OvercookedKitchenEnv"]

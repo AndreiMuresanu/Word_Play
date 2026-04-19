@@ -5,13 +5,13 @@ from typing import TYPE_CHECKING
 import pygame
 
 if TYPE_CHECKING:
-    from .renderer import PygameRenderer, PositionLayoutAdapter
+    from .renderer import Pygame_Renderer, Position_Layout_Adapter
 
 
 def configure_renderer(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     *,
-    layout: "PositionLayoutAdapter",
+    layout: "Position_Layout_Adapter",
     tile_size: int,
     draw_grid_overlay: bool = False,
 ) -> None:
@@ -47,7 +47,7 @@ def configure_renderer(
     renderer.selected_entity_name = None
 
 
-def apply_renderer_metrics(renderer: "PygameRenderer", tile_size: int) -> None:
+def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
     """Apply tile-size-derived layout metrics and rebuild dependent font state."""
     renderer.tile_size = tile_size
     renderer.hud_height = max(156, tile_size * 4)
@@ -87,7 +87,7 @@ def desktop_size() -> tuple[int, int]:
 
 
 def fitted_tile_size(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     *,
     grid_width: int,
     grid_height: int,
@@ -135,7 +135,7 @@ def fitted_tile_size(
     return max_fit_tile
 
 
-def init_pygame_if_needed(renderer: "PygameRenderer") -> None:
+def init_pygame_if_needed(renderer: "Pygame_Renderer") -> None:
     """Create the pygame window and fonts the first time rendering is used."""
     if renderer._pygame_initialized:
         return
@@ -148,7 +148,7 @@ def init_pygame_if_needed(renderer: "PygameRenderer") -> None:
     apply_renderer_metrics(renderer, renderer.tile_size)
 
 
-def ensure_screen_size(renderer: "PygameRenderer", width: int, height: int) -> None:
+def ensure_screen_size(renderer: "Pygame_Renderer", width: int, height: int) -> None:
     """Resize the pygame window only when the target dimensions change."""
     desired_size = (width, height)
     if renderer._window_size == desired_size:

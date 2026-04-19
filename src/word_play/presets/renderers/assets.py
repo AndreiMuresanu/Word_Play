@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import pygame
 
 if TYPE_CHECKING:
-    from .renderer import PygameRenderer
+    from .renderer import Pygame_Renderer
 
 
 def candidate_asset_paths(asset_name: str) -> list[Path]:
@@ -19,7 +19,7 @@ def candidate_asset_paths(asset_name: str) -> list[Path]:
     ]
 
 
-def get_or_load_image(renderer: "PygameRenderer", sprite_name: str) -> Any | None:
+def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | None:
     """Load a sprite once and reuse it from the renderer cache."""
     if sprite_name in renderer._image_cache:
         return renderer._image_cache[sprite_name]
@@ -34,7 +34,7 @@ def get_or_load_image(renderer: "PygameRenderer", sprite_name: str) -> Any | Non
     return None
 
 
-def get_scaled_image(renderer: "PygameRenderer", sprite_name: str, width: int, height: int) -> Any | None:
+def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, height: int) -> Any | None:
     """Load and cache a sprite scaled to the requested dimensions."""
     cache_key = (sprite_name, width, height)
     if cache_key in renderer._scaled_image_cache:
@@ -51,7 +51,7 @@ def get_scaled_image(renderer: "PygameRenderer", sprite_name: str, width: int, h
     return scaled
 
 
-def resolve_wall_sprite(renderer: "PygameRenderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
+def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
     """Choose the best wall sprite variant for a tile based on neighbors."""
     from .wall_geometry import adjacent_wall_variant_name, wall_connections
 

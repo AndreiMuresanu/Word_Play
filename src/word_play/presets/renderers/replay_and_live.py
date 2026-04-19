@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from word_play.core import Action_Selection, Environment
     from word_play.core.components import Agent_Policy
 
-    from .renderer import PygameRenderer
+    from .renderer import Pygame_Renderer
 
 
 def run_exp(
@@ -59,7 +59,6 @@ def run_exp(
         log_path=None if log_path is None else str(log_path),
         log_root=None if log_root is None else str(log_root),
         record_title=record_title,
-        autoplay=autoplay,
         step_delay=step_delay,
         max_steps=max_steps,
         initial_notes=initial_notes,
@@ -118,7 +117,7 @@ class ReplayFrameEnvironment:
         self.current_phase = frame.get("current_phase")
         self.hide_bottom_hud = bool(frame.get("hide_bottom_hud", False))
         self.draw_grid_overlay = False
-        self._visible_tiles = [tuple(tile) for tile in frame.get("visible_tiles", [])]
+        self._visible_tiles = [tuple(tile) for tile in (frame.get("visible_tiles") or [])]
         self._background_tiles = list(frame.get("background_tiles", []))
         entities = self._build_entities(frame.get("entities", []))
         self.state = SimpleNamespace(entities=entities)
@@ -256,10 +255,14 @@ def prompt_options_for_arg(selection: "Action_Selection", arg_name: str, arg: An
     if "bool" in parser_name:
         return [("true", True), ("false", False)]
 
-    raise ValueError(
-        f"Pygame prompt only supports choice-like arguments right now. "
-        f"Could not build numeric options for '{arg_name}' on '{selection}'."
-    )
+    # For numeric types (like inventory index), return a default fallback
+    # This handles preview/sequence policies that don't specify all kwargs
+    # Check for common patterns: "index", "int", or any numeric naming convention
+    if "index" in arg_name.lower() or "int" in parser_name or "Index" in arg.__class__.__name__:
+        return [("default (0)", 0)]
+
+    # For other types, return a default placeholder
+    return [("default", None)]
 
 
 def build_pending_prompt(
@@ -273,15 +276,34 @@ def build_pending_prompt(
         if not selection.required_kwargs or selection.action_kwargs:
             continue
         for arg_name, arg in selection.required_kwargs.items():
+            options = prompt_options_for_arg(selection, arg_name, arg)
             prompt_queue.append(
                 {
                     "selection_index": selection_index,
                     "arg_name": arg_name,
                     "arg": arg,
-                    "options": prompt_options_for_arg(selection, arg_name, arg),
+                    "options": options,
                 }
             )
 
+    if not prompt_queue:
+        return None
+
+    # Auto-resolve prompts that have exactly one option (defaults for sequence/auto mode)
+    # This allows action sequences to work without interactive prompt selection
+    resolved_count = 0
+    for prompt_entry in list(prompt_queue):  # Use list() to allow modification during iteration
+        options = prompt_entry["options"]
+        if len(options) == 1:
+            # Auto-apply the single option
+            selection = step_actions[prompt_entry["selection_index"]]
+            selection.action_kwargs = selection.action_kwargs or {}
+            _, value = options[0]
+            selection.action_kwargs[prompt_entry["arg_name"]] = value
+            prompt_queue.remove(prompt_entry)
+            resolved_count += 1
+
+    # If all prompts were resolved, no pending prompt needed
     if not prompt_queue:
         return None
 
@@ -316,7 +338,7 @@ def apply_prompt_choice(pending_prompt: dict[str, Any], option_index: int) -> bo
 def apply_live_hud(
     env: "Environment",
     *,
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     paused: bool,
     step_cursor: int,
     total_steps: int,
@@ -351,7 +373,7 @@ def apply_live_hud(
         f"Score: {getattr(env, 'score', 0)} Step: {getattr(env, 'tick', 0)} LIVE"
     )
     env.hud_lines = [
-        "Live view: Esc quit, R reset, Enter advance when waiting, click entity to inspect.",
+        "Live view: Esc to exit, R to reset.",
         f"Progress: step {step_cursor}/{total_steps}",
         (
             f"Camera: focus {renderer.camera_focus_entity_name} "
@@ -374,7 +396,7 @@ def apply_live_hud(
 
 def apply_replay_hud(
     frame: dict[str, Any],
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     frame_index: int,
     frame_count: int,
     paused: bool,
@@ -398,7 +420,7 @@ def apply_replay_hud(
     ]
 
 
-def handle_entity_click(renderer: "PygameRenderer", env: "Environment", mouse_pos: tuple[int, int]) -> None:
+def handle_entity_click(renderer: "Pygame_Renderer", env: "Environment", mouse_pos: tuple[int, int]) -> None:
     """Select the clicked entity and focus agents; clear selection on empty-space clicks."""
     for entity in getattr(env.state, "entities", []):
         if entity.name not in renderer._last_drawn_entity_rects:
@@ -419,7 +441,7 @@ def handle_entity_click(renderer: "PygameRenderer", env: "Environment", mouse_po
 
 
 def capture_frame(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     *,
     selected_actions: list["Action_Selection"] | None = None,
@@ -439,7 +461,7 @@ def capture_frame(
 
 
 def record_frame(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     *,
     frames: list[dict[str, Any]],
@@ -463,7 +485,7 @@ def record_frame(
 
 
 def step_and_record(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     *,
     frames: list[dict[str, Any]],
@@ -495,7 +517,7 @@ def make_recorder(
     if not keep_logs:
         return None
 
-    from word_play.utils import ExperimentRecorder, default_experiment_log_path
+    from word_play.utils.interactive_env import ExperimentRecorder, default_experiment_log_path
 
     resolved_path = Path(log_path) if log_path is not None else default_experiment_log_path(title, root_dir=log_root)
     return ExperimentRecorder(resolved_path, title=title, metadata=metadata)
@@ -514,7 +536,7 @@ def load_recording_payload(log_path: str | Path) -> dict[str, Any]:
 
 
 def replay_frames(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     frames: list[dict[str, Any]],
     *,
     autoplay: bool = False,
@@ -575,7 +597,7 @@ def replay_frames(
 
 
 def replay_recording(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     log_path: str | Path,
     *,
     autoplay: bool = False,
@@ -592,7 +614,7 @@ def replay_recording(
 
 
 def run_live_view(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     env: "Environment",
     *,
     step_builder: Callable[["Environment"], list["Action_Selection"]],
@@ -602,7 +624,6 @@ def run_live_view(
     log_root: str | Path | None = None,
     record_title: str = "Environment Replay",
     record_metadata: dict[str, Any] | None = None,
-    autoplay: bool = True,
     step_delay: float = 0.28,
     max_steps: int | None = None,
     reset_factory: Callable[[], "Environment"] | None = None,
@@ -634,7 +655,7 @@ def run_live_view(
     committed_steps = 0
 
     clock = pygame.time.Clock()
-    paused = not autoplay
+    paused = False  # Live mode always starts immediately, no pause option
     last_step_at = time.monotonic()
     pending_prompt: dict[str, Any] | None = None
     step_request_id = 0
@@ -757,10 +778,6 @@ def run_live_view(
                 renderer.selected_entity_name = None
                 renderer.camera_center = None
                 renderer._entity_last_positions = {}
-            elif event.key in {pygame.K_RETURN, pygame.K_KP_ENTER} and committed_steps < total_steps:
-                if step_worker is None or not step_worker.is_alive():
-                    start_step_request(resume_play=False)
-                paused = True
 
         if (
             pending_prompt is None
@@ -783,16 +800,27 @@ def build_policy_step_actions(
     *,
     on_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None,
 ) -> list["Action_Selection"]:
-    """Build one action per agent by querying each attached Agent_Policy."""
-    from word_play.core.components import Agent_Policy
+    """Build one action per agent by querying each attached Agent_Policy or Non_Agent_Policy."""
+    from word_play.core.components import Agent_Policy, Non_Agent_Policy
 
     selections: list[Action_Selection] = []
     for agent_id, agent in enumerate(env.agents):
+        # Check for Agent_Policy first (LLM policies), then fall back to Non_Agent_Policy (preview/sequence policies)
         policy = agent.get_component(Agent_Policy)
-        if policy is None:
-            raise ValueError(f"Agent '{agent.name}' is missing an Agent_Policy component.")
         observation = env.observe(agent_id)
-        selection, info = policy.select_action(observation)
+        
+        if policy is not None:
+            # Agent_Policy: takes observation, returns (Action_Selection, info)
+            selection, info = policy.select_action(observation)
+        else:
+            # Non_Agent_Policy: takes possible_actions and env, returns Action_Selection
+            policy = agent.get_component(Non_Agent_Policy)
+            if policy is None:
+                raise ValueError(f"Agent '{agent.name}' is missing an Agent_Policy or Non_Agent_Policy component.")
+            possible_actions = env.possible_actions(agent)
+            selection = policy.select_action(possible_actions, env)
+            info = {}
+        
         if on_selection is not None:
             on_selection(env, observation, agent_id, selection, info)
         selections.append(selection)
@@ -800,7 +828,7 @@ def build_policy_step_actions(
 
 
 def run_policy_live_view(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     *,
     env: "Environment",
     step_builder: Callable[["Environment"], list["Action_Selection"]] | None = None,
@@ -822,7 +850,7 @@ def run_policy_live_view(
 def _run_render_session(
     *,
     env: "Environment" | None = None,
-    build_env: Callable[["PygameRenderer"], "Environment"] | None = None,
+    build_env: Callable[["Pygame_Renderer"], "Environment"] | None = None,
     policy_mode: str = "preview",
     layout: Any | None = None,
     tile_size: int | None = None,
@@ -845,8 +873,8 @@ def _run_render_session(
     """Build an env, optionally attach LLM policies, and run the shared live renderer."""
     from word_play.core.components import Agent_Policy
     from word_play.presets.renderers.renderer import (
-        EnvironmentLayoutAdapter,
-        PygameRenderer,
+        Environment_Layout_Adapter,
+        Pygame_Renderer,
         apply_agent_sidebar,
         apply_policy_selection_sidebar,
     )
@@ -857,23 +885,12 @@ def _run_render_session(
         if llm_policy_builder is None:
             raise ValueError("LLM mode requires an llm_policy_builder.")
 
-        from word_play.presets.models import OpenAIChatModel, register_model
-
-        register_model(
-            model_key,
-            lambda: OpenAIChatModel(
-                model_name=model_name,
-                api_key_env="OPENROUTER_API_KEY",
-                base_url=base_url,
-                default_generation_config={"temperature": 0.2},
-            ),
-        )
-
+        
     if env is None and build_env is None:
         raise ValueError("_run_render_session requires either env or build_env.")
 
     resolved_tile_size = tile_size or 32
-    renderer = PygameRenderer(layout=layout or EnvironmentLayoutAdapter(), tile_size=resolved_tile_size)
+    renderer = Pygame_Renderer(layout=layout or Environment_Layout_Adapter(), tile_size=resolved_tile_size)
     env = env if env is not None else build_env(renderer)
     if hasattr(env, "renderer_impl"):
         env.renderer_impl = renderer
@@ -903,6 +920,12 @@ def _run_render_session(
         ]
 
     if policy_mode == "llm":
+        from word_play.presets.models import OpenRouter_Model, LLM_MODEL_REGISTRY
+        LLM_MODEL_REGISTRY[model_key] = OpenRouter_Model(
+            model_name=model_name,
+            generation_params={"temperature": 0.2},
+        )
+
         if sidebar_width is not None:
             env.hud_sidebar_width = sidebar_width
         for agent in env.agents:
@@ -943,7 +966,6 @@ def _run_render_session(
         log_path=log_path,
         log_root=log_root,
         record_title=resolved_record_title,
-        autoplay=autoplay,
         step_delay=step_delay,
         max_steps=resolved_max_steps,
         initial_notes=resolved_initial_notes,
@@ -960,7 +982,7 @@ def Run_Render(
     default_base_url: str,
     default_log_dir: str,
     env: "Environment" | None = None,
-    build_env: Callable[["PygameRenderer"], "Environment"] | None = None,
+    build_env: Callable[["Pygame_Renderer"], "Environment"] | None = None,
     llm_policy_builder: Callable[["Environment", Entity, str], "Agent_Policy"] | None = None,
     sidebar_width: int | None = None,
     record_title_builder: Callable[[str], str] | None = None,
