@@ -4,7 +4,6 @@ import argparse
 import csv
 import json
 import os
-from dataclasses import dataclass
 
 from word_play.core import (
     Action,
@@ -28,11 +27,8 @@ from word_play.presets.movement.single_point import (
     SINGLE_POINT_MOVEMENT_SYSTEM,
     Single_Point_Position,
 )
-from word_play.presets.observation.simple_observation import (
-    Simple_Observation,
-    format_action_list,
-)
-from word_play.presets.observation.utils import entity_state_to_str, indent
+from word_play.presets.observation.simple_observation import Simple_Observation
+from word_play.presets.observation.utils import entity_state_to_str
 from word_play.presets.systems.communication import (
     Communication_Policy,
     Human_Communication_Policy,
@@ -149,6 +145,40 @@ class Payoff_Matrix(Component):
     def cumulative_reward_for(self, agent_name: str) -> float:
         return self.cumulative_rewards.get(agent_name, 0.0)
 
+    def observation_sections(
+        self,
+        *,
+        agent_name: str,
+        step_count: int,
+        max_steps: int,
+    ) -> tuple[str, ...]:
+        sections = [self.objective_text]
+
+        if self.last_joint_actions is not None and self.last_payoffs is not None:
+            sections.append( # this step basically just shows the last action and the payoff for that action (ensuring that this is not the first step)
+                "\n".join(
+                    [
+                        "LAST STEP RESULT:",
+                        f"  joint_actions: {self.last_joint_actions}",
+                        f"  payoffs: {self.last_payoffs}",
+                    ]
+                )
+            )
+
+        steps_remaining = max(0, max_steps - step_count)
+        sections.append(
+            "\n".join(
+                [
+                    "GAME STATE:",
+                    f"  game_name: {self.game_name}",
+                    f"  step_count: {step_count}/{max_steps}",
+                    f"  steps_remaining: {steps_remaining}",
+                    f"  cumulative_reward: {self.cumulative_reward_for(agent_name):+.2f}",
+                ]
+            )
+        )
+        return tuple(sections)
+
     def participant_agents(self, env: Environment) -> list[Entity]:
         if self.auto_add_payoff_matrix_actions_to_all_agents:
             return list(env.agents)
@@ -160,6 +190,8 @@ class Payoff_Matrix(Component):
         ]
 
     def _ensure_actions(self, participant_agents: list[Entity]) -> None:
+        # this ensures that each agent has an action for each action in the payoff matrix
+        # we call this on instantiation 
         for agent in participant_agents:
             existing_action_indices = {
                 action.action_index
@@ -175,6 +207,14 @@ class Payoff_Matrix(Component):
                         action_name=action_name,
                     )
                 )
+            """
+            for reference, it would look something like this:
+                agent.actions = [
+                    Payoff_Matrix_Action(action_index=0, action_name="Cooperate"),
+                    Payoff_Matrix_Action(action_index=1, action_name="Defect"),
+                ]
+
+            """
 
 
 class Payoff_Matrix_Action(Action):
@@ -205,64 +245,7 @@ class Payoff_Matrix_Action(Action):
         return f"Choose action: {self.action_name}."
 
 
-@dataclass(slots=True, kw_only=True)
-class Payoff_Matrix_Observation(Simple_Observation):
-    game_name: str
-    objective_text: str
-    step_count: int
-    max_steps: int
-    cumulative_reward: float
-    last_joint_actions: dict[str, str] | None
-    last_payoffs: dict[str, float] | None
-
-    def __str__(self) -> str:
-        last_step_block = ""
-        if self.last_joint_actions is not None and self.last_payoffs is not None:
-            last_step_block = "\n".join(
-                [
-                    "LAST STEP RESULT:",
-                    f"  joint_actions: {self.last_joint_actions}",
-                    f"  payoffs: {self.last_payoffs}",
-                ]
-            )
-
-        steps_remaining = max(0, self.max_steps - self.step_count)
-        agent_block = "YOUR STATE:\n" + indent(entity_state_to_str(self.agent))
-        visible_area_block = (
-            "VISIBLE AREA:\n"
-            + f"  square radius: {self.observation_radius}\n"
-            + f"  center: {self.agent.position}"
-        )
-        game_state_block = "\n".join(
-            [
-                "GAME STATE:",
-                f"  game_name: {self.game_name}",
-                f"  step_count: {self.step_count}/{self.max_steps}",
-                f"  steps_remaining: {steps_remaining}",
-                f"  cumulative_reward: {self.cumulative_reward:+.2f}",
-            ]
-        )
-        nearby_block = _format_payoff_matrix_nearby_entities(self.nearby_entities, self.agent)
-        actions_block = "AVAILABLE ACTIONS (reply with the index):" + format_action_list(self.possible_actions)
-
-        return "\n\n".join(
-            filter(
-                None,
-                [
-                    f"REWARD THIS TURN: {self.last_reward}",
-                    self.objective_text,
-                    last_step_block,
-                    game_state_block,
-                    agent_block,
-                    visible_area_block,
-                    nearby_block,
-                    actions_block,
-                ],
-            )
-        )
-
-
-def _format_payoff_matrix_nearby_entities(nearby_entities: list[Entity], agent: Entity) -> str:
+def format_payoff_matrix_nearby_entities(nearby_entities: list[Entity], agent: Entity) -> str:
     lines = []
     for entity in nearby_entities:
         if entity is agent:
@@ -328,20 +311,19 @@ class Payoff_Matrix_Environment(Simple_Env_Reset_Mixin, Environment):
         agent = self.agents[agent_id]
         payoff_matrix = self.get_payoff_matrix_component()
         last_reward = self.last_rewards[agent_id]
-        return Payoff_Matrix_Observation(
+        return Simple_Observation(
             possible_actions=self.possible_actions(agent),
             nearby_entities=self.entities_near_position(agent.position),
             agent=agent,
             last_reward=0.0 if last_reward is None else last_reward,
             info=self.infos[agent_id],
             observation_radius=0,
-            game_name=payoff_matrix.game_name,
-            objective_text=payoff_matrix.objective_text,
-            step_count=self.step_count,
-            max_steps=self.max_steps,
-            cumulative_reward=payoff_matrix.cumulative_reward_for(agent.name),
-            last_joint_actions=payoff_matrix.last_joint_actions,
-            last_payoffs=payoff_matrix.last_payoffs,
+            extra_sections=payoff_matrix.observation_sections(
+                agent_name=agent.name,
+                step_count=self.step_count,
+                max_steps=self.max_steps,
+            ),
+            nearby_entities_formatter=format_payoff_matrix_nearby_entities,
         )
 
     def environment_start_of_step(self, action_selections: list[Action_Selection]) -> None:
@@ -349,6 +331,8 @@ class Payoff_Matrix_Environment(Simple_Env_Reset_Mixin, Environment):
 
     def environment_end_of_step(self, action_selections: list[Action_Selection]) -> None:
         pass
+
+    # TODO: something to think about, maybe we should have these 2 functions above be abstract method in Environment class?
 
     def get_payoff_matrix_component(self) -> Payoff_Matrix:
         for entity in self.state.entities:
@@ -426,6 +410,9 @@ def make_policy(model_mode: str, model_key: str | None):
         max_stored_observation_chars=1500,
     )
 
+# added this function to build the entities for payoff matrix games, but 
+# we might not need it, but since most of the payoff matrix games have 2 agents and to 
+# avoid repeating code, it's added here for now:
 
 def build_entities(
     *,
@@ -542,6 +529,7 @@ def run_payoff_matrix_game(
     cumulative_rewards = [0.0] * len(env.agents)
     csv_file = None
     log_writer = None
+
     if log_path:
         parent_dir = os.path.dirname(log_path)
         if parent_dir:
@@ -583,6 +571,7 @@ def run_payoff_matrix_game(
             observations_by_agent: dict[str, str] = {}
             actions_by_agent: dict[str, str] = {}
             selection_info_by_agent: dict[str, dict] = {}
+            
             for agent_id, agent in enumerate(env.agents):
                 observation = env.observe(agent_id)
                 observations_by_agent[agent.name] = str(observation)
