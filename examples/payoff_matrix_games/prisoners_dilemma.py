@@ -49,3 +49,7 @@ if __name__ == "__main__":
         max_steps=args.max_steps if args.max_steps_legacy is None else args.max_steps_legacy,
         log_path=args.log_path,
     )
+
+# make one example that is not using this payoff matrix template
+# 3x3 room of 5 agents, voting box in center, it runs prisoner dilemma, track reward, communication enabled
+# add payoff matrix component to the preset

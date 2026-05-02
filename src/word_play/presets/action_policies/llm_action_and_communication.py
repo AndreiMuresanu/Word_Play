@@ -94,6 +94,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
 
         selection_prompt = self._selection_prompt(observation, reasoning)
         last_exc: Exception | None = None
+        last_raw: str | None = None
 
         for attempt in range(self.MAX_ATTEMPTS):
             raw = self.model.generate_text(
@@ -101,6 +102,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
                 self.action_generation_config,
                 max_new_tokens=self.action_max_new_tokens,
             )
+            last_raw = raw
             try:
                 action_selection = self._parse_selection(raw, observation)
                 self._record_observation(observation)
@@ -115,7 +117,8 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
 
         raise RuntimeError(
             f"LLM failed to produce a valid action after {self.MAX_ATTEMPTS} attempts. "
-            f"Last error: {last_exc}"
+            f"Last error: {last_exc}\n"
+            f"Last raw response:\n{last_raw}"
         )
 
     def _record_observation(self, observation: Observation) -> None:

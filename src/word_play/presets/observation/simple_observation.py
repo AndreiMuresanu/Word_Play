@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import pprint
+from typing import Callable
 
 from word_play.core import Action_Selection, Entity, Observation
 from word_play.presets.observation.utils import (
@@ -38,6 +39,8 @@ class Simple_Observation(Observation):
     last_reward: float
     info: dict
     observation_radius: int = 0
+    extra_sections: tuple[str, ...] = ()
+    nearby_entities_formatter: Callable[[list[Entity], Entity], str] | None = None
 
     def __str__(self) -> str:
         if "action_success" not in self.info:
@@ -55,7 +58,8 @@ class Simple_Observation(Observation):
             + f"  square radius: {self.observation_radius}\n"
             + f"  center: {self.agent.position}"
         )
-        nearby_block = format_nearby_entities(self.nearby_entities, self.agent)
+        nearby_formatter = self.nearby_entities_formatter or format_nearby_entities
+        nearby_block = nearby_formatter(self.nearby_entities, self.agent)
         actions_block = "AVAILABLE ACTIONS (reply with the index):" + format_action_list(self.possible_actions)
 
         return "\n\n".join(
@@ -63,6 +67,7 @@ class Simple_Observation(Observation):
                 None,
                 [
                     prev_block + f"REWARD THIS TURN: {self.last_reward}",
+                    *self.extra_sections,
                     agent_block,
                     visible_square_block,
                     nearby_block,

@@ -77,7 +77,17 @@ class OpenRouter_Model(Model):
     ) -> str:
         params = {**self.default_generation_config, **(generation_config or {})}
         if max_new_tokens is not None:
-            params["max_tokens"] = max_new_tokens
+            if self.model_name.startswith(("openai/gpt-", "openai/o")):
+                params["max_completion_tokens"] = max_new_tokens
+            else:
+                params["max_tokens"] = max_new_tokens
+
+        extra_body = dict(params.pop("extra_body", {}) or {})
+        for openrouter_param in ("plugins", "provider", "reasoning", "transforms"):
+            if openrouter_param in params:
+                extra_body[openrouter_param] = params.pop(openrouter_param)
+        if extra_body:
+            params["extra_body"] = extra_body
 
         response = self._get_client().chat.completions.create(
             model=self.model_name,

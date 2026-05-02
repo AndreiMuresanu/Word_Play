@@ -20,7 +20,7 @@ def available_games() -> list[str]:
     return sorted(
         path.stem
         for path in GAMES_DIR.glob("*.py")
-        if path.stem not in {"common", "__init__"}
+        if path.stem not in {"common", "__init__", "model_params"}
     )
 
 
