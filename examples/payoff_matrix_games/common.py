@@ -31,11 +31,11 @@ from word_play.presets.systems.communication import (
 )
 from word_play.presets.systems.do_nothing import Do_Nothing
 
-from .expand_symmetric_payoff_matrix import expand_symmetric_payoff_matrix
-
 try:
+    from .expand_symmetric_payoff_matrix import normalize_payoff_matrix
     from .model_params import SUPPORTED_MODEL_MODES, make_policy, register_model
 except ImportError:
+    from expand_symmetric_payoff_matrix import normalize_payoff_matrix
     from model_params import SUPPORTED_MODEL_MODES, make_policy, register_model
 
 
@@ -45,9 +45,8 @@ class Payoff_Matrix(Component):
 
     Manages payoff resolution for a simultaneous-move stage game.
 
-    The payoff matrix is specified as a symmetric single-player row and
-    automatically expanded to the full N-player matrix via
-    `expand_symmetric_payoff_matrix`.
+    The payoff matrix can be specified as either a symmetric single-player
+    payoff row or as a fully expanded payoff matrix with tuple leaves.
 
     Action names are provided as a flat list whose length must match the
     number of rows in the payoff matrix.  Each name maps 1-to-1 to an action
@@ -63,9 +62,8 @@ class Payoff_Matrix(Component):
         Ordered list of strategy labels.  Length must equal the number of
         actions (top-level entries) in `payoff_matrix`.
     payoff_matrix:
-        Single-player payoff row (symmetric game input).  Passed directly to
-        `expand_symmetric_payoff_matrix`.  See that function's docstring for
-        the exact expected shape.
+        Either a symmetric single-player payoff row, or a full payoff matrix
+        whose leaves contain one reward per player.
 
         Example (2-player Prisoner's Dilemma, actions [Cooperate, Defect]):
             [[3, 0],   # Cooperate vs [C, D]
@@ -109,7 +107,7 @@ class Payoff_Matrix(Component):
         self.action_names = list(action_names)
         self.objective_text = objective_text
         self.auto_add_payoff_matrix_actions_to_all_agents = auto_add_payoff_matrix_actions_to_all_agents
-        self.payoff_matrix = expand_symmetric_payoff_matrix(payoff_matrix, num_players=num_players)
+        self.payoff_matrix = normalize_payoff_matrix(payoff_matrix, num_players=num_players)
 
         self.pending_rewards: list[float] = []
         self.current_round_votes: dict[Entity, int] = {}
@@ -325,6 +323,12 @@ class Payoff_Matrix_Environment(Simple_Env_Reset_Mixin, Environment):
             ),
             nearby_entities_formatter=format_payoff_matrix_nearby_entities,
         )
+
+    def environment_start_of_step(self, action_selections: list[Action_Selection]) -> None:
+        pass
+
+    def environment_end_of_step(self, action_selections: list[Action_Selection]) -> None:
+        pass
 
     def get_payoff_matrix_component(self) -> Payoff_Matrix:
         for entity in self.state.entities:
@@ -552,5 +556,7 @@ def parse_common_args():
         choices=list(SUPPORTED_MODEL_MODES),
     )
     parser.add_argument("--max_steps", type=int, default=20)
+    parser.add_argument("--max_rounds", type=int, dest="max_steps_legacy", default=None)
     parser.add_argument("--log", dest="log_path", default=None)
+    parser.add_argument("--reward_log", dest="log_path", default=None)
     return parser.parse_args()

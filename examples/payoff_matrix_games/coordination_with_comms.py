@@ -23,8 +23,8 @@ def run_exp(
         game_name="Coordination with Communication",
         action_names=["Left", "Right"],
         payoff_matrix=[
-            [(1.0, 1.0), (0.0, 0.0)],
-            [(0.0, 0.0), (1.0, 1.0)],
+            [1.0, 0.0],
+            [0.0, 1.0],
         ],
         objective_text="\n".join(
             [

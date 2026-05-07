@@ -23,8 +23,8 @@ def run_exp(
         game_name="Stag Hunt",
         action_names=["Hunt Stag", "Hunt Hare"],
         payoff_matrix=[
-            [(4.0, 4.0), (0.0, 2.0)],
-            [(2.0, 0.0), (2.0, 2.0)],
+            [4.0, 0.0],
+            [2.0, 2.0],
         ],
         objective_text="\n".join(
             [

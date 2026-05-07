@@ -20,19 +20,20 @@ def run_exp(
     log_path: str | None = None,
 ) -> None:
     run_payoff_matrix_game(
-        game_name="Battle of the Sexes",
-        action_names=["Opera", "Football"],
+        game_name="Running with Scissors",
+        action_names=["Rock", "Paper", "Scissors"],
         payoff_matrix=[
-            [(3.0, 2.0), (0.0, 0.0)],
-            [(0.0, 0.0), (2.0, 3.0)],
+            [(0.0, 0.0), (-1.0, 1.0), (1.0, -1.0)],
+            [(1.0, -1.0), (0.0, 0.0), (-1.0, 1.0)],
+            [(-1.0, 1.0), (1.0, -1.0), (0.0, 0.0)],
         ],
         objective_text="\n".join(
             [
-                "OBJECTIVE: Battle of the Sexes",
-                "  You and your opponent must coordinate on a shared activity.",
-                "  Opera together gives Agent A 3 and Agent B 2.",
-                "  Football together gives Agent A 2 and Agent B 3.",
-                "  A mismatch gives both players 0.",
+                "OBJECTIVE: Running with Scissors",
+                "  You and your opponent each choose Rock, Paper, or Scissors.",
+                "  Rock beats Scissors, Scissors beats Paper, and Paper beats Rock.",
+                "  Winning gives you 1 point, losing gives you -1, and drawing gives you 0.",
+                "  There is no dominant strategy.",
             ]
         ),
         model_mode=model_mode,
