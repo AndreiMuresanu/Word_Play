@@ -1,1 +1,0 @@
-This folder will contain a file (or, if required, a folder) for each render we have. E.g., grid world render, graph render, ascii render, etc.
