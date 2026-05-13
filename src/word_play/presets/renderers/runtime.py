@@ -1,17 +1,18 @@
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 import pygame
 
 if TYPE_CHECKING:
-    from .renderer import PygameRenderer, PositionLayoutAdapter
+    from .renderer import Pygame_Renderer, Position_Layout_Adapter
 
 
 def configure_renderer(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     *,
-    layout: "PositionLayoutAdapter",
+    layout: "Position_Layout_Adapter",
     tile_size: int,
     draw_grid_overlay: bool = False,
 ) -> None:
@@ -47,10 +48,10 @@ def configure_renderer(
     renderer.selected_entity_name = None
 
 
-def apply_renderer_metrics(renderer: "PygameRenderer", tile_size: int) -> None:
+def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
     """Apply tile-size-derived layout metrics and rebuild dependent font state."""
     renderer.tile_size = tile_size
-    renderer.hud_height = max(156, tile_size * 4)
+    renderer.hud_height = max(100, min(180, tile_size * 3 + 24))
     renderer.margin = max(12, tile_size // 2)
     renderer.viewport_pad_w = renderer.margin
     renderer.viewport_pad_e = renderer.margin
@@ -87,7 +88,7 @@ def desktop_size() -> tuple[int, int]:
 
 
 def fitted_tile_size(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     *,
     grid_width: int,
     grid_height: int,
@@ -119,8 +120,8 @@ def fitted_tile_size(
         height = viewport_pad_n + viewport_pad_s + grid_height * tile_size + hud_height
         if width <= max_width and height <= max_height:
             fitting_tiles.append(tile_size)
-            if min_halfscreen_tile is None and (width >= min_width or height >= min_height):
-                min_halfscreen_tile = tile_size
+        if min_halfscreen_tile is None and (width >= min_width or height >= min_height):
+            min_halfscreen_tile = tile_size
 
     if not fitting_tiles:
         return 16
@@ -135,7 +136,7 @@ def fitted_tile_size(
     return max_fit_tile
 
 
-def init_pygame_if_needed(renderer: "PygameRenderer") -> None:
+def init_pygame_if_needed(renderer: "Pygame_Renderer") -> None:
     """Create the pygame window and fonts the first time rendering is used."""
     if renderer._pygame_initialized:
         return
@@ -148,10 +149,113 @@ def init_pygame_if_needed(renderer: "PygameRenderer") -> None:
     apply_renderer_metrics(renderer, renderer.tile_size)
 
 
-def ensure_screen_size(renderer: "PygameRenderer", width: int, height: int) -> None:
+def ensure_screen_size(renderer: "Pygame_Renderer", width: int, height: int) -> None:
     """Resize the pygame window only when the target dimensions change."""
     desired_size = (width, height)
     if renderer._window_size == desired_size:
         return
     renderer.screen = pygame.display.set_mode(desired_size)
     renderer._window_size = desired_size
+
+
+# Module-level state for the zero-arg render_step() convenience API
+_default_renderer: "Pygame_Renderer | None" = None
+
+
+def render_step(
+    env,
+    *,
+    renderer: "Pygame_Renderer | None" = None,
+    step_delay: float = 0.0,
+    sidebar_agent_id: int = 0,
+) -> bool:
+    """Render one frame, pump events, return False if the window was closed.
+
+    This is the single function to call inside any experiment step loop.
+    It handles: initializing pygame (first call), rendering the full frame
+    (background, entities, effects, HUD), pumping the event queue, and
+    detecting window close / ESC.
+
+    Args:
+        env: The environment to render.
+        renderer: An existing ``Pygame_Renderer`` to reuse across calls.
+            If *None*, one is created automatically on the first call and
+            reused for the lifetime of the process.
+        step_delay: Seconds to sleep after displaying the frame (useful
+            for slowing down autoplay).
+        sidebar_agent_id: Which agent's policy info to show in the
+            sidebar (only used when the env has a HUD sidebar).
+
+    Returns:
+        True if the window is still open, False if the user closed it.
+
+    Usage — zero-config (auto-creates renderer)::
+
+        from word_play.presets.renderers import render_step
+
+        for step in range(100):
+            actions = [agent.get_component(Agent_Policy).select_action(env.observe(i))[0]
+                       for i, agent in enumerate(env.agents)]
+            env.step(actions)
+            if not render_step(env): break
+
+    Usage — custom renderer (pass your own layout / tile size)::
+
+        from word_play.presets.renderers import Pygame_Renderer, Grid_Layout_Adapter, render_step
+
+        renderer = Pygame_Renderer(layout=Grid_Layout_Adapter(), tile_size=56)
+
+        for step in range(100):
+            # ... env.step(actions) ...
+            if not render_step(env, renderer=renderer, step_delay=0.3): break
+    """
+    from word_play.core.components import Agent_Policy
+    from .draw import render_environment
+    from .hud import apply_policy_selection_sidebar
+    from .layout import Environment_Layout_Adapter
+    from .renderer import Pygame_Renderer
+
+    global _default_renderer
+
+    rend = renderer or _default_renderer
+    if rend is None:
+        rend = Pygame_Renderer(layout=Environment_Layout_Adapter(), tile_size=56)
+        _default_renderer = rend
+
+    if not rend._pygame_initialized:
+        init_pygame_if_needed(rend)
+
+    # Auto-populate sidebar from the selected agent's last policy info
+    if env.agents and 0 <= sidebar_agent_id < len(env.agents):
+        agent = env.agents[sidebar_agent_id]
+        policy = agent.get_component(Agent_Policy)
+        last_info = getattr(policy, "_last_info", None)
+        if last_info is not None:
+            obs = env.observe(sidebar_agent_id)
+            apply_policy_selection_sidebar(
+                env,
+                observation=obs,
+                selection=last_info.get("_last_action", ""),
+                info=last_info,
+            )
+
+    render_environment(rend, env)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            if rend is _default_renderer:
+                _default_renderer = None
+            return False
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            pygame.quit()
+            if rend is _default_renderer:
+                _default_renderer = None
+            return False
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_r and hasattr(env, "reset"):
+            env.reset()
+
+    if step_delay > 0:
+        time.sleep(step_delay)
+
+    return True
