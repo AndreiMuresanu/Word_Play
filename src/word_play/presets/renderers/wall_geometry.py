@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from word_play.core import Entity
 
-    from .renderer import PygameRenderer, Renderable
+    from .renderer import Pygame_Renderer, Renderable
 
 
 def normalize_background_item(item: Any) -> dict[str, Any]:
@@ -20,7 +21,7 @@ def normalize_background_item(item: Any) -> dict[str, Any]:
 
 
 def world_bounds(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     background_items: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> tuple[int, int, int, int]:
@@ -45,7 +46,7 @@ def world_bounds(
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def screen_rect_for_tile(renderer: "PygameRenderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
+def screen_rect_for_tile(renderer: "Pygame_Renderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
     """Convert a world tile coordinate into the top-left screen pixel."""
     px = renderer.viewport_pad_w + (x - min_x) * renderer.tile_size
     py = renderer.viewport_pad_n + (max_y - y) * renderer.tile_size
@@ -61,8 +62,62 @@ def collect_wall_positions(background_items: list[dict[str, Any]]) -> set[tuple[
     }
 
 
+def infer_enclosed_floor_positions(
+    wall_positions: set[tuple[int, int]],
+    occupied_positions: set[tuple[int, int]] | None = None,
+) -> set[tuple[int, int]]:
+    """Infer enclosed non-wall cells using a boundary flood fill over a finite grid.
+
+    The finite grid is defined by the bounding box of all known occupied positions
+    (falling back to walls when no additional occupied positions are provided).
+    Non-wall boundary-reachable cells are marked outside; remaining non-wall cells
+    are considered interior floor.
+    """
+    occupied_positions = set(occupied_positions or set())
+    bounds_positions = wall_positions | occupied_positions
+    if not bounds_positions:
+        return set()
+
+    xs = [x for x, _ in bounds_positions]
+    ys = [y for _, y in bounds_positions]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+
+    outside: set[tuple[int, int]] = set()
+    queue: deque[tuple[int, int]] = deque()
+
+    def maybe_enqueue(x: int, y: int) -> None:
+        pos = (x, y)
+        if pos in wall_positions or pos in outside:
+            return
+        outside.add(pos)
+        queue.append(pos)
+
+    for x in range(min_x, max_x + 1):
+        maybe_enqueue(x, min_y)
+        maybe_enqueue(x, max_y)
+    for y in range(min_y, max_y + 1):
+        maybe_enqueue(min_x, y)
+        maybe_enqueue(max_x, y)
+
+    while queue:
+        x, y = queue.popleft()
+        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
+            if min_x <= nx <= max_x and min_y <= ny <= max_y:
+                maybe_enqueue(nx, ny)
+
+    floors: set[tuple[int, int]] = set()
+    for x in range(min_x, max_x + 1):
+        for y in range(min_y, max_y + 1):
+            pos = (x, y)
+            if pos not in wall_positions and pos not in outside:
+                floors.add(pos)
+
+    return floors
+
+
 def screen_position_for_entity(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
     entity: "Entity",
     *,
     min_x: int,

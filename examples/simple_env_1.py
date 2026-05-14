@@ -33,6 +33,8 @@ from word_play.presets.systems.communication import (
 from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
+from word_play.presets.renderers.renderer import Renderable
+from word_play.presets.renderers.runtime import render_step
 from word_play.utils import tilemap_to_entities
 
 import pprint
@@ -74,7 +76,12 @@ def run_exp():
         "W": {
             "name": "Wall",
             "tags": ["wall"],
-            "components": [Collidable()],
+            "components": [
+                Collidable(),
+                Renderable(
+                    wall_set="sprite_library/src/world_tiles/indoors/wall_sets/bright_brick_wall",
+                ),
+            ],
         },
         "I": {
             "name": "Iskandar",
@@ -99,6 +106,10 @@ def run_exp():
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
                 Human_Communication_Policy(),
+                Renderable(
+                    sprite_path="sprite_library/src/characters/humanoids/dwarven/dwarf_ranger.png",
+                    last_message=None,
+                ),
             ],
         },
         "A": {
@@ -124,16 +135,30 @@ def run_exp():
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
                 Human_Communication_Policy(),
+                Renderable(
+                    sprite_path="sprite_library/src/characters/humanoids/dwarven/dwarf_expert.png",
+                    last_message=None,
+                ),
             ],
         },
         "f": {
             "name": "Blue Flower",
             "tags": ["item"],
+            "components": [
+                Renderable(
+                    sprite_path="sprite_library/src/items/materials/misc/blue_flowers.png",
+                ),
+            ],
         },
         "b": {
             "name": "Barrel",
             "tags": ["item"],
-            "components": [Health(max_health=1, starting_health=1)],
+            "components": [
+                Health(max_health=1, starting_health=1),
+                Renderable(
+                    sprite_path="sprite_library/src/items/materials/misc/closed_barrel.png",
+                ),
+            ],
         },
         "c": {
             "name": "Cow",
@@ -142,6 +167,10 @@ def run_exp():
                 Health(max_health=5, starting_health=5),
                 Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
                 TalkingCow(),
+                Renderable(
+                    sprite_path="sprite_library/src/characters/monsters/misc/dairy_cow.png",
+                    last_message=None,
+                ),
             ],
         },
         "h": {
@@ -149,6 +178,10 @@ def run_exp():
             "components": [
                 Health(max_health=10, starting_health=10),
                 TalkingCow(),
+                Renderable(
+                    sprite_path="sprite_library/src/characters/monsters/misc/bull.png",
+                    last_message=None,
+                ),
             ],
         },
         "t": {
@@ -156,13 +189,22 @@ def run_exp():
             "components": [
                 Health(max_health=1, starting_health=1),
                 TalkingCow(),
+                Renderable(
+                    sprite_path="sprite_library/src/characters/monsters/misc/baby_dairy_cow.png",
+                    last_message=None,
+                ),
             ],
         },
         "s": {
             "name": "Spike",
             "actions": [Attack(name="Poke", damage_amount=1)],
             "tags": ["item"],
-            "components": [Follow_Action_Sequence([(Attack, None)])],
+            "components": [
+                Follow_Action_Sequence([(Attack, None)]),
+                Renderable(
+                    sprite_path="sprite_library/src/items/materials/misc/spikes.png",
+                ),
+            ],
         },
     }
 
@@ -172,8 +214,10 @@ def run_exp():
         entity_order=randomize_agent_order,
         observation_radius=1,
     )
+    env.floor_sprite = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png"
 
     for step in range(exp_steps):
+        render_step(env)
         cur_step_actions = []
         for agent_id, agent in enumerate(env.agents):
             observation = env.observe(agent_id)

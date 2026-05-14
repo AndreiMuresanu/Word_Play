@@ -35,6 +35,19 @@ def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderabl
     return renderables
 
 
+def sidebar_is_allowed(env: "Environment") -> bool:
+    """Allow the right HUD only for single-agent envs or envs with human action components."""
+    agents = list(getattr(env, "agents", []) or [])
+    if len(agents) == 1:
+        return True
+
+    for entity in getattr(getattr(env, "state", None), "entities", []):
+        for component in getattr(entity, "components", {}).values():
+            if component.__class__.__name__ == "Human_Takes_Action":
+                return True
+    return False
+
+
 def background_items(env: "Environment", renderer: "Pygame_Renderer") -> list[dict[str, Any]]:
     """Fetch and normalize background tiles from the active layout adapter."""
     return [normalize_background_item(item) for item in renderer.layout.background(env)]
@@ -653,17 +666,22 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
         finally:
             renderer.world_surface = previous_world_surface
 
-    # Container overlay
-    from word_play.presets.systems.containers import Container
-    container = entity.get_component(Container)
-    if container is not None and container.is_open:
-        visible = container.visible_contents()[:4] if hasattr(container, "visible_contents") else []
-        previous_world_surface = renderer.world_surface
-        renderer.world_surface = renderer.effect_surface
-        try:
-            draw_entity_items(renderer, visible, px, py, layout_mode="grid", max_items=4)
-        finally:
-            renderer.world_surface = previous_world_surface
+    # Optional overlays for branch-specific presets. If the corresponding
+    # system modules do not exist on this branch, skip these overlays.
+    try:
+        from word_play.presets.systems.containers import Container
+    except Exception:
+        Container = None
+    if Container is not None:
+        container = entity.get_component(Container)
+        if container is not None and container.is_open:
+            visible = container.visible_contents()[:4] if hasattr(container, "visible_contents") else []
+            previous_world_surface = renderer.world_surface
+            renderer.world_surface = renderer.effect_surface
+            try:
+                draw_entity_items(renderer, visible, px, py, layout_mode="grid", max_items=4)
+            finally:
+                renderer.world_surface = previous_world_surface
 
     # Inventory overlay
     from word_play.presets.systems.inventory import Inventory
@@ -674,28 +692,34 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
             items = inv_list[:2]
             draw_entity_items(renderer, items, px, py, layout_mode="badges", max_items=2, scale=0.50)
 
-    # Crafter overlay
-    from word_play.presets.systems.crafter import Crafter
-    crafter = entity.get_component(Crafter)
-    if crafter is not None:
-        has_inputs = len(crafter.staged_items) > 0
-        has_output = crafter.output_item is not None
-        output_already_drawn = has_output and getattr(renderable, 'overlay_sprite', None)
-        if has_inputs or has_output:
-            if crafter.staged_items:
-                draw_entity_items(renderer, [crafter.staged_items[0]], px, py, layout_mode="corner", max_items=1, scale=0.42)
-            if not output_already_drawn:
-                output = getattr(crafter, "output_item", None)
-                if output:
-                    draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
+    try:
+        from word_play.presets.systems.crafter import Crafter
+    except Exception:
+        Crafter = None
+    if Crafter is not None:
+        crafter = entity.get_component(Crafter)
+        if crafter is not None:
+            has_inputs = len(crafter.staged_items) > 0
+            has_output = crafter.output_item is not None
+            output_already_drawn = has_output and getattr(renderable, 'overlay_sprite', None)
+            if has_inputs or has_output:
+                if crafter.staged_items:
+                    draw_entity_items(renderer, [crafter.staged_items[0]], px, py, layout_mode="corner", max_items=1, scale=0.42)
+                if not output_already_drawn:
+                    output = getattr(crafter, "output_item", None)
+                    if output:
+                        draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
 
-    # Single item holder overlay
-    from word_play.presets.systems.containers import Single_Item_Holder
-    holder = entity.get_component(Single_Item_Holder)
-    if holder is not None:
-        stored = getattr(holder, 'stored_item', None)
-        if stored:
-            draw_entity_items(renderer, [stored], px, py, layout_mode="center", max_items=1, scale=0.55)
+    try:
+        from word_play.presets.systems.containers import Single_Item_Holder
+    except Exception:
+        Single_Item_Holder = None
+    if Single_Item_Holder is not None:
+        holder = entity.get_component(Single_Item_Holder)
+        if holder is not None:
+            stored = getattr(holder, 'stored_item', None)
+            if stored:
+                draw_entity_items(renderer, [stored], px, py, layout_mode="center", max_items=1, scale=0.55)
 
     emissive_sprite = getattr(renderable, "emissive_sprite", None)
     if emissive_sprite:
@@ -856,7 +880,7 @@ def draw_hud_panel(renderer: "Pygame_Renderer", env: "Environment", x_offset: in
     pygame.draw.line(renderer.screen, (52, 63, 79), (x_offset, hud_top), (x_offset + width, hud_top), 2)
 
     # Step counter and mode
-    tick = getattr(env, "tick", 0)
+    tick = getattr(env, "tick", getattr(env, "cur_step", 0))
     episode_length = getattr(env, "episode_length", None)
     current_phase = getattr(env, "current_phase", None)
 
@@ -1583,9 +1607,10 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment") -> None:
 
     grid_width = max(1, max_x - min_x + 1)
     grid_height = max(1, max_y - min_y + 1)
-    agent_count = len(getattr(env, "agents", []))
     sidebar_lines = list(getattr(env, "hud_sidebar_lines", []))
-    needs_sidebar = bool(sidebar_lines) and agent_count <= 1
+    selected_action_lines = list(getattr(env, "hud_sidebar_selected_action", []))
+    action_lines = list(getattr(env, "hud_sidebar_actions", []))
+    needs_sidebar = sidebar_is_allowed(env) and bool(sidebar_lines or selected_action_lines or action_lines)
     requested_sidebar_width = int(getattr(env, "hud_sidebar_width", 380 if needs_sidebar else 0)) if needs_sidebar else 0
     hud_visible = not getattr(env, "hide_bottom_hud", False)
     resolved_tile_size = fitted_tile_size(

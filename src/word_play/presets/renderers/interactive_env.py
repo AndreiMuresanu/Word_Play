@@ -226,7 +226,7 @@ def capture_environment_frame(
 
     return {
         "frame_type": frame_type,
-        "tick": getattr(env, "tick", 0),
+        "tick": getattr(env, "tick", getattr(env, "cur_step", 0)),
         "description": env.description,
         "score": getattr(env, "score", None),
         "width": getattr(env, "width", None),

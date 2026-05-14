@@ -72,13 +72,42 @@ class RunSessionConfig:
     discussion_generator: Callable[[Entity, "Environment"], str] | None = None
 
 
+def _apply_agent_sidebar(env: Any, *, observation: Any | None = None, header: str | None = None) -> None:
+    """Populate a minimal sidebar without relying on the removed hud module."""
+    if header is not None:
+        env.hud_sidebar_header = header
+    if observation is not None:
+        env.hud_sidebar_lines = [str(observation)]
+
+
+def _apply_policy_selection_sidebar(
+    env: Any,
+    *,
+    observation: Any | None = None,
+    selection: Any | None = None,
+    info: dict[str, Any] | None = None,
+) -> None:
+    """Populate lightweight selected-action and action-list sidebar sections."""
+    env.hud_sidebar_selected_action = [
+        "Chosen Action:",
+        str(selection) if selection is not None else "(no action chosen yet)",
+    ]
+    if observation is not None:
+        possible_actions = list(getattr(observation, "possible_actions", []))
+        env.hud_sidebar_actions = [
+            "Possible Actions:",
+            *(f"[{idx}] {action}" for idx, action in enumerate(possible_actions)),
+        ]
+        if len(env.hud_sidebar_actions) == 1:
+            env.hud_sidebar_actions.append("(no actions available)")
+
+
 def run_session(config: RunSessionConfig) -> str | None:
     """Run a rendered session with unified configuration.
 
     This is the core implementation used by run_exp, Run_Render, and phase-based runs.
     """
     from word_play.core.components import Agent_Policy
-    from word_play.presets.renderers.hud import apply_agent_sidebar, apply_policy_selection_sidebar
     from word_play.presets.renderers.layout import Environment_Layout_Adapter
     from word_play.presets.renderers.renderer import Pygame_Renderer
 
@@ -172,7 +201,7 @@ def run_session(config: RunSessionConfig) -> str | None:
         if env.agents and 0 <= config.sidebar_agent_id < len(env.agents):
             _init_obs = env.observe(config.sidebar_agent_id)
             _init_agent = env.agents[config.sidebar_agent_id]
-            apply_agent_sidebar(env, observation=_init_obs, header=_init_agent.name)
+            _apply_agent_sidebar(env, observation=_init_obs, header=_init_agent.name)
 
     # In non-LLM modes, replace any Agent_Policy (e.g. LLM policies defined in the env)
     # with the appropriate Non_Agent_Policy based on the chosen policy mode.
@@ -208,7 +237,7 @@ def run_session(config: RunSessionConfig) -> str | None:
     if selection_callback is None and config.policy_mode == "llm" and len(env.agents) <= 1:
         _sidebar_aid = config.sidebar_agent_id
         selection_callback = lambda env, obs, aid, sel, info: (
-            apply_policy_selection_sidebar(env, observation=obs, selection=sel, info=info)
+            _apply_policy_selection_sidebar(env, observation=obs, selection=sel, info=info)
             if aid == _sidebar_aid else None
         )
 
@@ -612,7 +641,7 @@ def apply_live_hud(
         options = prompt_entry["options"]
         prompt_number = pending_prompt["prompt_index"] + 1
         total_prompts = len(pending_prompt["prompt_queue"])
-        env.hud_header = f"INPUT REQUIRED Step: {getattr(env, 'tick', 0)} Prompt {prompt_number}/{total_prompts}"
+        env.hud_header = f"INPUT REQUIRED Step: {getattr(env, 'tick', getattr(env, 'cur_step', 0))} Prompt {prompt_number}/{total_prompts}"
         env.hud_lines = [
             f"{selection.actor.name}: {selection}",
             f"Choose {prompt_entry['arg_name']} ({arg.arg_description(selection.actor, selection.target_entity, selection.env)})",
@@ -629,7 +658,7 @@ def apply_live_hud(
     orders_line = f"Orders: {env.order_summary()}" if hasattr(env, "order_summary") else None
     health_line = f"Health: {env.health_summary()}" if hasattr(env, "health_summary") else None
     env.hud_header = (
-        f"Score: {getattr(env, 'score', 0)} Step: {getattr(env, 'tick', 0)} LIVE"
+        f"Score: {getattr(env, 'score', 0)} Step: {getattr(env, 'tick', getattr(env, 'cur_step', 0))} LIVE"
     )
     env.hud_lines = [
         "Live view: Esc to exit, R to reset.",
@@ -1154,10 +1183,6 @@ def _run_render_session(
 ) -> str | None:
     """Build an env, optionally attach LLM policies, and run the shared live renderer."""
     from word_play.core.components import Agent_Policy
-    from word_play.presets.renderers.hud import (
-        apply_agent_sidebar,
-        apply_policy_selection_sidebar,
-    )
     from word_play.presets.renderers.layout import Environment_Layout_Adapter
     from word_play.presets.renderers.renderer import Pygame_Renderer
 
@@ -1235,7 +1260,7 @@ def _run_render_session(
         if env.agents and 0 <= sidebar_agent_id < len(env.agents):
             _init_obs = env.observe(sidebar_agent_id)
             _init_agent = env.agents[sidebar_agent_id]
-            apply_agent_sidebar(env, observation=_init_obs, header=_init_agent.name)
+            _apply_agent_sidebar(env, observation=_init_obs, header=_init_agent.name)
 
     # In non-LLM modes, replace any Agent_Policy (e.g. LLM policies from env definition)
     # with Non_Agent_Policy so the step builder doesn't try to call an LLM API.
@@ -1270,7 +1295,7 @@ def _run_render_session(
                 None
                 if policy_mode != "llm"
                 else lambda env, observation, agent_id, selection, info: (
-                    apply_policy_selection_sidebar(
+                    _apply_policy_selection_sidebar(
                         env,
                         observation=observation,
                         selection=selection,
@@ -1386,11 +1411,9 @@ def _run_render_session_with_phases(
     """
     from word_play.core.components import Agent_Policy, Non_Agent_Policy
     from word_play.core import Action_Selection
-    from word_play.presets.renderers.live_runner import render_interactive_env
     from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 
     from .renderer import Pygame_Renderer
-    from .hud import apply_agent_sidebar, apply_policy_selection_sidebar
 
     renderer = Pygame_Renderer(layout=layout, tile_size=tile_size)
     env.renderer_impl = renderer
@@ -1412,13 +1435,9 @@ def _run_render_session_with_phases(
 
     episode_length = getattr(env, "episode_length", 30)
 
-    def step_builder_with_phases(
-        env: Any,
-        current_step: int,
-        get_selected_action_fn: Any,
-        pending_action: Any,
-    ) -> dict[str, Any]:
+    def step_builder_with_phases(env: Any) -> list[Action_Selection]:
         """Build step with phase-aware execution."""
+        current_step = getattr(env, "tick", getattr(env, "cur_step", 0))
         # Determine phase
         cycle_length = discuss_steps + act_steps
         phase_pos = current_step % cycle_length
@@ -1436,14 +1455,7 @@ def _run_render_session_with_phases(
                     if renderable:
                         renderable.last_message = discussion_generator(agent, env)
 
-            # Advance environment without agent actions
-            env.step([])
-
-            return {
-                "action_selections": [],
-                "phase": "discuss",
-                "step": current_step,
-            }
+            return []
         else:
             # ACT phase: agents select actions
             action_selections = []
@@ -1459,29 +1471,21 @@ def _run_render_session_with_phases(
                     possible = agent.possible_actions
                     if possible:
                         action_selections.append(possible[0])
-
-            if action_selections:
-                env.step(action_selections)
-
-            return {
-                "action_selections": action_selections,
-                "phase": "act",
-                "step": current_step,
-            }
+            return action_selections
 
     # Setup sidebar with phase indicator
     sidebar_agent_id = 0
     agent = env.agents[sidebar_agent_id] if env.agents else None
-    if sidebar_width := getattr(env, "hud_sidebar_width", None):
-        apply_agent_sidebar(env, sidebar_agent_id, sidebar_width)
-    apply_policy_selection_sidebar(env, agent, sidebar_agent_id)
+    if agent is not None:
+        _apply_agent_sidebar(env, observation=env.observe(sidebar_agent_id), header=agent.name)
+        _apply_policy_selection_sidebar(env, observation=env.observe(sidebar_agent_id), selection=None, info=None)
 
     # Add phase indicator to sidebar
     original_header = getattr(env, "hud_sidebar_header", "Meeting")
 
     def update_sidebar_header():
         phase = getattr(env, "current_phase", "UNKNOWN")
-        step = getattr(env, "tick", 0)
+        step = getattr(env, "tick", getattr(env, "cur_step", 0))
         env.hud_sidebar_header = f"{original_header} | {phase} (step {step})"
 
     # Initial notes explaining the system
@@ -1492,7 +1496,7 @@ def _run_render_session_with_phases(
         f"Pattern: {discuss_steps}x discuss, {act_steps}x act",
     ]
 
-    render_interactive_env(
+    run_live_view(
         renderer=renderer,
         env=env,
         step_builder=step_builder_with_phases,
