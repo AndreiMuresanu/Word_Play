@@ -58,9 +58,10 @@ class Model(ABC):
         generation_config: Mapping[str, Any] | None = None,
         max_new_tokens: int | None = None,
     ) -> str:
-        prompt = "\n".join(input_text) if isinstance(input_text, list) else input_text
+        if type(input_text) is str:
+            raise NotImplementedError("Batched inputs are not supported yet.")
         return self.generate_chat(
-            messages=[Chat_Message(role="user", content=prompt)],
+            messages=[Chat_Message(role="user", content=input_text)],
             generation_config=generation_config,
             max_new_tokens=max_new_tokens,
         )

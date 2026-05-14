@@ -1,22 +1,15 @@
 from word_play.core import (
     Action,
     Agent_Policy,
-    Component,
     Entity,
-    Environment,
-    Observation,
-    Target_Is_Nearby,
     Target_Is_Self,
-    Target_Not_Self,
 )
 from word_play.presets.action_args import (
     Dict_Arg,
-    Dynamic_Choice_Arg,
     Int_Arg,
     List_Arg,
     String_Arg,
     String_Choice_Arg,
-    arg_in_range,
 )
 from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 from word_play.presets.action_policies.human import Human_Takes_Action
@@ -42,7 +35,6 @@ from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
 from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY
-from word_play.utils import tilemap_to_entities
 
 import pprint
 import sys
@@ -70,18 +62,8 @@ class Test_Action(Action):
         return "Test Action."
 
 
-def register_run_exp_model(model_mode: str) -> str:
-    model_key = "run_exp_llm"
-    if model_mode == "human_llm":
-        LLM_MODEL_REGISTRY.register(model_key, Human_Model)
-    else:
-        raise ValueError(f"Unsupported model_mode: {model_mode}")
-    return model_key
-
-
-def run_exp(model_mode: str = "human_action"):
+def run_exp():
     exp_steps = 1000
-    model_key = register_run_exp_model(model_mode) if model_mode == "human_llm" else None
 
     env = Simple_2D_Grid_World(
         description="The forbidden forest.",
@@ -101,11 +83,7 @@ def run_exp(model_mode: str = "human_action"):
                     Start_Private_Conversation(),
                 ],
                 components=[
-                    (
-                        LLM_Action_And_Communication_Policy(model_key=model_key)
-                        if model_mode == "human_llm"
-                        else Human_Takes_Action()
-                    ),
+                    Human_Takes_Action(),
                     Inventory(
                         collectable_tags=["item"],
                         inventory_size=2,
@@ -203,15 +181,10 @@ def run_exp(model_mode: str = "human_action"):
             observation = env.observe(agent_id)
             action, info = agent.get_component(Agent_Policy).select_action(observation)
             print(f"[step {step}] {agent.name} -> {action}")
-            if info:
-                if info.get("reasoning"):
-                    print(f"[step {step}] reasoning:\n{info['reasoning']}")
-                if info.get("raw_response"):
-                    print(f"[step {step}] raw response:\n{info['raw_response']}")
             cur_step_actions.append(action)
 
         env.step(cur_step_actions)
 
 
 if __name__ == "__main__":
-    run_exp(sys.argv[1] if len(sys.argv) > 1 else "human_action")
+    run_exp()
