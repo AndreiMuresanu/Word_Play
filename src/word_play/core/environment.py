@@ -197,8 +197,8 @@ class Environment(ABC):
             entity.post_actions_step(env=self)
 
         self.environment_end_of_step(action_selections)
-        self.last_rewards = self.reward_func(action_selections, self)
 
+        self.last_rewards = self.reward_func(action_selections, self)
         self.cur_step += 1
         self._reorder_entities()
 
