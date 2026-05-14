@@ -18,10 +18,12 @@ def random_order(entities: list[Entity], env: Environment) -> list[int]:
 
 
 def randomize_agent_order(entities: list[Entity], env: Environment) -> list[int]:
-    # This is not the current ordering of agents since the order of the self.agents list does not change. But shuffling
-    # self.agents' order or the current agent order are both equivalent.
-    new_agent_order = list(range(len(env.agents)))
-    random.shuffle(new_agent_order)
+    new_order = list(range(len(entities)))
+    agent_indices = [entity_idx for entity_idx, entity in enumerate(entities) if entity.is_agent]
+    shuffled_agent_indices = agent_indices.copy()
+    random.shuffle(shuffled_agent_indices)
 
-    new_agent_order_iter = iter(new_agent_order)
-    return [next(new_agent_order_iter) if entity.is_agent else entity_idx for entity_idx, entity in enumerate(entities)]
+    for target_idx, source_idx in zip(agent_indices, shuffled_agent_indices):
+        new_order[target_idx] = source_idx
+
+    return new_order

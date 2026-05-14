@@ -1,19 +1,9 @@
 from word_play.core import (
-    Action,
     Agent_Policy,
     Entity,
-    Target_Is_Self,
-)
-from word_play.presets.action_args import (
-    Dict_Arg,
-    Int_Arg,
-    List_Arg,
-    String_Arg,
-    String_Choice_Arg,
 )
 from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 from word_play.presets.action_policies.human import Human_Takes_Action
-from word_play.presets.entity_orderings import entity_definition_order, random_order, randomize_agent_order
 from word_play.presets.environments.simple_2d_grid_world import Simple_2D_Grid_World
 from word_play.presets.movement.simple_2d_grid import (
     Collidable,
@@ -34,30 +24,6 @@ from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
 
-import pprint
-
-
-class Test_Action(Action):
-
-    def __init__(self):
-        super().__init__(
-            validation_rules=[Target_Is_Self()],
-            required_kwargs={
-                "gold coin count": Int_Arg(),
-                "assignment": Dict_Arg(String_Arg(), Int_Arg()),
-                "damages": List_Arg(Int_Arg()),
-                "item": String_Choice_Arg({"hammer", "apple"}),
-            },
-        )
-
-    def exec_action(self, actor, target_entity, env, kwargs):
-        print("=======")
-        pprint.pprint(kwargs, sort_dicts=False)
-        print("=======")
-
-    def action_description_text(self, actor, target_entity, env):
-        return "Test Action."
-
 
 def run_exp():
     exp_steps = 1000
@@ -69,7 +35,6 @@ def run_exp():
                 name="Iskandar",
                 position=Position_2D(0, 0),
                 actions=[
-                    Test_Action(),
                     Do_Nothing(),
                     Move_Up(),
                     Move_Down(),
@@ -91,30 +56,6 @@ def run_exp():
                     Human_Communication_Policy(),
                 ],
             ),
-            # Entity(
-            #     name="Andrei",
-            #     position=Position_2D(0, 0),
-            #     actions=[
-            #         Do_Nothing(),
-            #         Move_Up(),
-            #         Move_Down(),
-            #         Move_Left(),
-            #         Move_Right(),
-            #         Attack(name="Zap", damage_amount=1),
-            #     ],
-            #     components=[
-            #         Human_Takes_Action(),
-            #         Inventory(
-            #             collectable_tags=["item"],
-            #             inventory_size=2,
-            #             starting_inventory=[
-            #                 Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])
-            #             ],
-            #         ),
-            #         Health(max_health=5, starting_health=3),
-            #         Collidable(collidable_tags=["wall"]),
-            #     ],
-            # ),
             Entity(name="Blue Flower", position=Position_2D(0, 1), tags=["item"]),
             Entity(
                 name="Barrel",
@@ -160,7 +101,6 @@ def run_exp():
                 tags=["wall"],
                 components=[Collidable()],
             ),
-            # TODO: for a real pike entity, you likely want an Attack_All_Nearby_Entities action instead of Attack
             Entity(
                 name="Spike",
                 position=Position_2D(0, -2),
@@ -169,7 +109,6 @@ def run_exp():
                 components=[Follow_Action_Sequence([(Attack, None)])],
             ),
         ],
-        entity_order=entity_definition_order,
     )
 
     for step in range(exp_steps):

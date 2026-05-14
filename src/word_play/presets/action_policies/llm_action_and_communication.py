@@ -11,14 +11,6 @@ from word_play.presets.observation.simple_observation import format_action_detai
 from word_play.presets.systems.communication.core import Communication_Policy
 
 
-# TODO: this is just a template, this class needs to be implemented. This class should use some general LLM API so that
-#       it can switch to use different LLMs very easily. It should not store the LLM in memory, since if we have many
-#       agents, we don't want many copies of the same LLM. It should also manage its memory, e.g., it is responsible for
-#       storing information about past observations and past chats with other agents.
-#       This class should accept a Human_LLM class as input for its LLM (e.g., see model_presets.py). The Human_LLM
-#       model sees the exact same thing as the LLM, the only difference is that the human is generating text instead of
-#       the LLM. This is a very useful class for testing and debugging.
-
 class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     """
     A combined action-selection and communication policy backed by any Model.
@@ -125,9 +117,9 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         observation_text = self._truncate_text(str(observation), self.max_stored_observation_chars)
         self.observation_history.append(observation_text)
         if len(self.observation_history) > self.observation_memory_window:
-            overflow = self.observation_history[:-self.observation_memory_window]
+            overflow = self.observation_history[: -self.observation_memory_window]
             self._update_observation_summary(overflow)
-            self.observation_history = self.observation_history[-self.observation_memory_window:]
+            self.observation_history = self.observation_history[-self.observation_memory_window :]
 
     def _update_observation_summary(self, observations: list[str]) -> None:
         summary_lines: list[str] = []
@@ -163,9 +155,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
                 state_lines.append(stripped)
 
         action_lines = [
-            line.strip()
-            for line in observation_text.splitlines()
-            if line.strip().startswith("[") and "]" in line
+            line.strip() for line in observation_text.splitlines() if line.strip().startswith("[") and "]" in line
         ]
         if action_lines:
             summary_parts.append(f"actions={', '.join(action_lines[:3])}")
@@ -176,7 +166,6 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             summary_parts.append(observation_text.strip().splitlines()[0][:160])
 
         return " | ".join(summary_parts)
-
 
     # -----------------------------------------------------------------------
     # Prompt builders
@@ -191,8 +180,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             return "\n\n".join(sections) + ("\n\n" if sections else "")
 
         entries = "\n\n---\n\n".join(
-            f"[t-{len(self.observation_history) - i}]\n{obs}"
-            for i, obs in enumerate(self.observation_history)
+            f"[t-{len(self.observation_history) - i}]\n{obs}" for i, obs in enumerate(self.observation_history)
         )
         sections.append(f"RECENT OBSERVATIONS (oldest to most recent):\n{entries}")
         return "\n\n".join(sections) + "\n\n"
@@ -249,22 +237,24 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             required_format = '{"action_choice_idx": <integer>}'
             example_output = '{"action_choice_idx": 0}'
             kwargs_instruction = (
-                "None of the available actions require kwargs. "
-                'Do not include "action_kwargs" in your response.\n\n'
+                "None of the available actions require kwargs. " 'Do not include "action_kwargs" in your response.\n\n'
             )
 
         return (
             "You are controlling an agent in a grid-world game.\n"
             "Choose exactly ONE action. Reply with ONLY a JSON object — no markdown, no extra text.\n\n"
             "REQUIRED FORMAT:\n"
-            + required_format + "\n\n"
+            + required_format
+            + "\n\n"
             + kwargs_instruction
             + f"Example: {example_output}\n\n"
             + self._observation_memory_block()
             + self._conversation_memory_block()
             + f"CURRENT OBSERVATION:\n{observation}\n"
-            + reasoning_block + "\n"
-            + format_action_details(observation.possible_actions) + "\n\n"
+            + reasoning_block
+            + "\n"
+            + format_action_details(observation.possible_actions)
+            + "\n\n"
             + "Your JSON:"
         )
 
@@ -311,7 +301,6 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
 
         return action_selection
 
-
     def _extract_json(self, text: str) -> dict:
         text = re.sub(r"```(?:json)?\s*", "", text).strip()
         match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -351,18 +340,14 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     # Communication_Policy — multi-agent dialogue
     # -----------------------------------------------------------------------
 
-    def start_conversation(
-        self, participants: list[Entity], env: Environment, info: str | None = None
-    ) -> None:
+    def start_conversation(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         self.conversation_history.clear()
         if info:
             self.conversation_history.append({"role": "system", "content": info})
             # be careful with system prompts
             # dont want the model to over pay attention to the system prompt
 
-    def send_message(
-        self, recipients: list[Entity], env: Environment, info: str | None = None
-    ) -> str:
+    def send_message(self, recipients: list[Entity], env: Environment, info: str | None = None) -> str:
         prompt = self._message_prompt(recipients, env, info)
         response = self.model.generate_text(
             self._with_system(prompt),
@@ -379,19 +364,15 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
         self.conversation_history.append({"role": "user", "content": f"{sender.name}: {message_text}"})
         self._trim_history()
 
-    def end_conversation(
-        self, participants: list[Entity], env: Environment, info: str | None = None
-    ) -> None:
+    def end_conversation(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         if info:
             self.conversation_history.append({"role": "system", "content": info})
         self._trim_history()
 
-    def _message_prompt(
-        self, recipients: list[Entity], env: Environment, info: str | None
-    ) -> str:
+    def _message_prompt(self, recipients: list[Entity], env: Environment, info: str | None) -> str:
         recipients_str = ", ".join(entity.name for entity in recipients)
         history_str = (
-            "\n".join(entry["content"] for entry in self.conversation_history[-self.conversation_memory_window:])
+            "\n".join(entry["content"] for entry in self.conversation_history[-self.conversation_memory_window :])
             or "(no prior messages)"
         )
         info_str = f"\nExtra context: {info}\n" if info else ""
@@ -408,7 +389,7 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
 
     def _trim_history(self) -> None:
         if len(self.conversation_history) > self.conversation_memory_window:
-            self.conversation_history = self.conversation_history[-self.conversation_memory_window:]
+            self.conversation_history = self.conversation_history[-self.conversation_memory_window :]
 
     def _truncate_text(self, text: str, max_chars: int) -> str:
         if max_chars <= 0:
