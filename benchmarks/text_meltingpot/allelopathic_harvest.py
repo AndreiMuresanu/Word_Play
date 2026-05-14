@@ -107,15 +107,8 @@ class Paint_Berry(Action):
         return f"Paint {target_entity.name} {self.color}."
 
 
-def run_exp(agent_count: int = 4, policy: str = "random"):
+def run_exp(agent_count: int = 4, policy: str = "random", model_name: str = "openai/gpt-4o-mini"):
     exp_steps = 2000
-    model_key = "allelopathic_harvest"
-
-    if policy == "llm":
-        LLM_MODEL_REGISTRY[model_key] = OpenRouter_Model(
-            model_name="openai/gpt-4o-mini",
-            generation_params={"temperature": 0.3},
-        )
 
     entity_tilemap = """
     WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
@@ -247,7 +240,7 @@ def run_exp(agent_count: int = 4, policy: str = "random"):
         preferred_color = random.choice(["red", "green", "blue"])
         if policy == "llm":
             agent_policy = LLM_Action_And_Communication_Policy(
-                model_key=model_key,
+                model_key="allelopathic_harvest",
                 system_prompt=(
                     f"You are Player {agent_id} in Allelopathic Harvest. "
                     f"You prefer {preferred_color} berries. "
@@ -321,5 +314,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent-count", type=int, default=4)
     parser.add_argument("--policy", choices=["random", "llm"], default="random")
+    parser.add_argument("--model-name", default="openai/gpt-4o-mini")
     args = parser.parse_args()
-    run_exp(agent_count=args.agent_count, policy=args.policy)
+    if args.policy == "llm":
+        LLM_MODEL_REGISTRY["allelopathic_harvest"] = OpenRouter_Model(
+            model_name=args.model_name,
+            generation_params={"temperature": 0.3},
+        )
+    run_exp(agent_count=args.agent_count, policy=args.policy, model_name=args.model_name)
