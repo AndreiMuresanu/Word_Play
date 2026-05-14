@@ -24,6 +24,22 @@ def component_data_attributes(comp):
     }
 
 
+def entity_state_to_str_with_complete_info(entity: Entity) -> str:
+    return pprint.pformat(
+        {
+            "name": entity.name,
+            "position": entity.position,
+            "tags": entity.tags,
+            "components": [
+                {"component type": ctype.__name__} | component_data_attributes(comp)
+                for ctype, comp in entity.components.items()
+                if component_data_attributes(comp)
+            ],
+        },
+        sort_dicts=False,
+    )
+
+
 def entity_state_to_str(entity: Entity) -> str:
     lines = [
         f"name: {entity.name}",
