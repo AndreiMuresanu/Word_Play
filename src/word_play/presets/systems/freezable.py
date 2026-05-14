@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from word_play.core import Action, Component, Entity, Environment
 from word_play.presets.action_validations import Target_Has_Component, Target_Is_Nearby
+from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.renderers import Renderable
-from word_play.presets.movement.simple_2d_grid import Position_2D
 
 
 class Freezable(Component):
     """An entity that can be frozen in place for a duration.
 
-    When frozen, the entity is teleported to a hold position and
-    returns to its spawn position when the freeze expires.
+    When frozen, the entity can only take the do-nothing action until
+    the freeze expires.
     """
 
     def __init__(
@@ -33,6 +33,10 @@ class Freezable(Component):
         self.default_duration = default_duration
         self.frozen_ticks = 0
         self.eliminated = False
+        self._unfrozen_actions: list[Action] | None = None
+
+    def post_initialization(self) -> None:
+        self._unfrozen_actions = list(self.entity.actions)
 
     @property
     def is_frozen(self) -> bool:
@@ -43,15 +47,16 @@ class Freezable(Component):
         self.frozen_ticks = max(self.frozen_ticks, dur)
         if not hasattr(self, "entity"):
             return
-        if self.hold_position is not None:
-            self.entity.position = Position_2D(*self.hold_position)
+        if self._unfrozen_actions is None:
+            self._unfrozen_actions = list(self.entity.actions)
+        self.entity.actions = [Do_Nothing()]
 
     def eliminate(self) -> None:
         self.eliminated = True
         self.frozen_ticks = 0
         if not hasattr(self, "entity"):
             return
-        self.entity.position = Position_2D(-1000, -1000)
+        self.entity.actions = [Do_Nothing()]
         renderable = self.entity.get_component(Renderable)
         if renderable is not None:
             renderable.visible = False
@@ -61,10 +66,8 @@ class Freezable(Component):
             return
         if self.frozen_ticks > 0:
             self.frozen_ticks -= 1
-            if self.hold_position is not None:
-                self.entity.position = Position_2D(*self.hold_position)
-            if self.frozen_ticks == 0 and self._spawn_position is not None:
-                self.entity.position = Position_2D(*self._spawn_position)
+            if self.frozen_ticks == 0 and self._unfrozen_actions is not None:
+                self.entity.actions = list(self._unfrozen_actions)
 
 
 class Freeze(Action):
