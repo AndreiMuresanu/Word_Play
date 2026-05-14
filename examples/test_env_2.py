@@ -13,7 +13,6 @@ from word_play.presets.action_args import (
 )
 from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 from word_play.presets.action_policies.human import Human_Takes_Action
-from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
 from word_play.presets.entity_orderings import entity_definition_order, random_order, randomize_agent_order
 from word_play.presets.environments.simple_2d_grid_world import Simple_2D_Grid_World
 from word_play.presets.movement.simple_2d_grid import (
@@ -34,10 +33,8 @@ from word_play.presets.systems.communication import (
 from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
-from word_play.presets.models import Human_Model, LLM_MODEL_REGISTRY
 
 import pprint
-import sys
 
 
 class Test_Action(Action):
