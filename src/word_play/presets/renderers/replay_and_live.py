@@ -18,6 +18,7 @@ from word_play.core.components import Component
 from word_play.presets.movement.simple_2d_grid import Position_2D
 
 from .draw import render_environment
+from .focus import set_focus_from_click
 from .interactive_env import load_recording_payload
 from .renderer import LLMConfig, Renderable
 from .runtime import init_pygame_if_needed
@@ -665,7 +666,7 @@ def apply_live_hud(
         f"Progress: step {step_cursor}/{total_steps}",
         (
             f"Camera: focus {renderer.camera_focus_entity_name} "
-            f"(radius {getattr(env, 'sight_radius', renderer.camera_focus_radius_tiles)})"
+            f"(radius {getattr(env, 'observation_radius', getattr(env, 'sight_radius', renderer.camera_focus_radius_tiles))})"
             if renderer.camera_focus_entity_name
             else "Camera: full map"
         ),
@@ -696,7 +697,7 @@ def apply_replay_hud(
         f"Score: {frame.get('score', 0)} Step: {frame.get('tick', 0)} REPLAY"
     )
     frame["hud_lines"] = [
-        "← → step | enter advance | r reset | esc quit | click inspect | [ ] resize",
+        "← → step | enter advance | r reset | esc quit | click agent follow | [ ] resize",
         f"Timeline: replay frame {frame_index + 1}/{frame_count} {'PAUSE' if paused else 'LIVE'}",
         (
             f"Inspecting: {renderer.selected_entity_name}"
@@ -710,22 +711,7 @@ def apply_replay_hud(
 
 def handle_entity_click(renderer: "Pygame_Renderer", env: "Environment", mouse_pos: tuple[int, int]) -> None:
     """Select the clicked entity and focus agents; clear selection on empty-space clicks."""
-    for entity in getattr(env.state, "entities", []):
-        if entity.name not in renderer._last_drawn_entity_rects:
-            continue
-        rect = renderer._last_drawn_entity_rects[entity.name]
-        if rect.collidepoint(mouse_pos):
-            renderer.selected_entity_name = entity.name
-            renderer.camera_focus_entity_name = entity.name if getattr(entity, "is_agent", False) else None
-            sight_radius = getattr(env, "sight_radius", None)
-            if renderer.camera_focus_entity_name is not None and isinstance(sight_radius, int):
-                renderer.camera_focus_radius_tiles = max(2, sight_radius)
-            if renderer.camera_focus_entity_name is None:
-                renderer.camera_center = None
-            return
-    renderer.selected_entity_name = None
-    renderer.camera_focus_entity_name = None
-    renderer.camera_center = None
+    set_focus_from_click(renderer, env, mouse_pos)
 
 
 def capture_frame(

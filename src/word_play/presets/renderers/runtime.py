@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from .focus import set_focus_from_click
+
 if TYPE_CHECKING:
     from .renderer import Pygame_Renderer, Position_Layout_Adapter
 
@@ -271,7 +273,8 @@ def prompt_human_action(renderer: "Pygame_Renderer", env: Any, observation: Any)
             position_label=str(getattr(entity, "position", "?")),
             instructions=[
                 "Use Up/Down to choose an action.",
-                "Press Enter to confirm.",
+                "Press Space to confirm the selected action.",
+                "Press Enter to go to the next step.",
             ],
             possible_actions=possible_actions,
             selected_index=selected_index,
@@ -291,7 +294,7 @@ def prompt_human_action(renderer: "Pygame_Renderer", env: Any, observation: Any)
             selected_index = (selected_index + 1) % len(possible_actions)
             refresh_sidebar()
             return None
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+        if event.key in (pygame.K_SPACE, pygame.K_RETURN, pygame.K_KP_ENTER):
             return possible_actions[selected_index]
         if event.key in NUMERIC_OPTION_KEYS:
             idx = NUMERIC_OPTION_KEYS[event.key]
@@ -374,7 +377,7 @@ def prompt_human_multi_select(
             "Selected indices:",
             ",".join(str(idx) for idx in sorted(selected)) if selected else "(none)",
         ]
-        env.hud_sidebar_actions = ["Conversation partners:"]
+        env.hud_sidebar_actions = ["Options:"]
         for idx, (value, label) in enumerate(options):
             cursor = ">" if idx == cursor_index else " "
             mark = "[x]" if value in selected else "[ ]"
@@ -488,6 +491,8 @@ def render_step(
             return False
         if event.type == pygame.KEYDOWN and event.key == pygame.K_r and hasattr(env, "reset"):
             env.reset()
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            set_focus_from_click(rend, env, event.pos)
 
     if step_delay > 0:
         time.sleep(step_delay)

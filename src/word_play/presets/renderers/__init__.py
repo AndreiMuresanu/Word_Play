@@ -9,14 +9,11 @@ from word_play.presets.renderers.interactive_env import (
 )
 from word_play.presets.renderers.layout import (
     Circle_Layout_Adapter,
-    Continuous_2D_Layout_Adapter,
     Environment_Layout_Adapter,
-    Graph_Layout_Adapter,
     Grid_Layout_Adapter,
     Position_Layout_Adapter,
     SinglePointLayout,
 )
-from word_play.presets.renderers.layout_room_graph import Room_Graph_Layout_Adapter
 from word_play.presets.renderers.renderer import LLMConfig, Pygame_Renderer, Renderable, Renderer
 from word_play.presets.renderers.replay_and_live import (
     ReplayFrameEnvironment,
@@ -30,10 +27,8 @@ from word_play.presets.renderers.runtime import init_pygame_if_needed, render_st
 
 __all__ = [
     "Circle_Layout_Adapter",
-    "Continuous_2D_Layout_Adapter",
     "Environment_Layout_Adapter",
     "ExperimentRecorder",
-    "Graph_Layout_Adapter",
     "Grid_Layout_Adapter",
     "InteractiveEnvironmentSession",
     "LLMConfig",
@@ -42,7 +37,6 @@ __all__ = [
     "Renderable",
     "Renderer",
     "ReplayFrameEnvironment",
-    "Room_Graph_Layout_Adapter",
     "Run_Render",
     "SinglePointLayout",
     "build_policy_step_actions",

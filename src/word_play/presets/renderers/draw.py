@@ -8,8 +8,13 @@ from typing import TYPE_CHECKING, Any
 import pygame
 
 from word_play.core import Entity
+from word_play.presets.systems.containers import Container, Single_Item_Holder
+from word_play.presets.systems.crafter import Crafter
+from word_play.presets.systems.communication.trade_communication.trade_actions import Public_Trade_Offer
+from word_play.presets.systems.inventory import Inventory
 
 from .assets import get_or_load_image, get_scaled_image, resolve_wall_sprite
+from .focus import focus_radius, set_focus_from_click
 from .wall_geometry import collect_wall_positions, normalize_background_item, screen_rect_for_tile, wall_neighbor_mask, world_bounds
 from .renderer import Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size
@@ -20,8 +25,7 @@ if TYPE_CHECKING:
     from .renderer import Pygame_Renderer
 
 
-# Note: Container/Inventory/Crafter imports are done inside functions
-# to avoid circular import issues with renderables module
+RUSTIC_TRADE_WINDOW_SPRITE = "src/ui/trade_window_rustic.png"
 
 
 def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderable]]:
@@ -36,14 +40,15 @@ def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderabl
 
 
 def sidebar_is_allowed(env: "Environment") -> bool:
-    """Allow the right HUD only for single-agent envs or envs with human action components."""
-    agents = list(getattr(env, "agents", []) or [])
-    if len(agents) == 1:
-        return True
-
+    """Allow the right HUD only for human-controlled input surfaces."""
+    human_policy_names = {
+        "Human_Takes_Action",
+        "Human_Communication_Policy",
+        "Human_Trading_Policy",
+    }
     for entity in getattr(getattr(env, "state", None), "entities", []):
         for component in getattr(entity, "components", {}).values():
-            if component.__class__.__name__ == "Human_Takes_Action":
+            if component.__class__.__name__ in human_policy_names:
                 return True
     return False
 
@@ -172,6 +177,20 @@ def selected_entity(env: "Environment", renderer: "Pygame_Renderer") -> Entity |
     return next((entity for entity in env.state.entities if entity.name == selected_name), None)
 
 
+def focused_entity(env: "Environment", renderer: "Pygame_Renderer") -> Entity | None:
+    """Return the camera-focused agent if it is still present."""
+    focus_name = getattr(renderer, "camera_focus_entity_name", None)
+    if not focus_name:
+        return None
+    return next(
+        (
+            entity for entity in env.state.entities
+            if entity.name == focus_name and getattr(entity, "is_agent", False)
+        ),
+        None,
+    )
+
+
 def update_damage_flash_state(renderer: "Pygame_Renderer", env: "Environment") -> None:
     """Track recent health drops so damaged entities can flash briefly."""
     now = time.monotonic()
@@ -222,9 +241,28 @@ def update_camera_state(
     max_world_y: int,
 ) -> tuple[int, int, int, int]:
     """Choose visible tile bounds from either full-map or focused camera mode."""
-    renderer.camera_center = None
+    focus = focused_entity(env, renderer)
+    if focus is None:
+        renderer.camera_center = None
+        renderer.camera_shake_strength = 0.0 if renderer.camera_shake_until <= time.monotonic() else renderer.camera_shake_strength
+        return min_world_x, max_world_x, min_world_y, max_world_y
+
     renderer.camera_shake_strength = 0.0 if renderer.camera_shake_until <= time.monotonic() else renderer.camera_shake_strength
-    return min_world_x, max_world_x, min_world_y, max_world_y
+    world_position = entity_world_position(renderer, focus)
+    if world_position is None:
+        renderer.camera_center = None
+        return min_world_x, max_world_x, min_world_y, max_world_y
+
+    center_x, center_y = world_position
+    radius = focus_radius(env, renderer)
+    renderer.camera_focus_radius_tiles = radius
+    renderer.camera_center = (center_x, center_y)
+    return (
+        max(min_world_x, center_x - radius),
+        min(max_world_x, center_x + radius),
+        max(min_world_y, center_y - radius),
+        min(max_world_y, center_y + radius),
+    )
 
 
 def is_within_visible_bounds(x: int, y: int, min_x: int, max_x: int, min_y: int, max_y: int) -> bool:
@@ -234,15 +272,26 @@ def is_within_visible_bounds(x: int, y: int, min_x: int, max_x: int, min_y: int,
 
 def visible_tile_set(env: "Environment", renderer: "Pygame_Renderer") -> set[tuple[int, int]] | None:
     """Return environment-level line-of-sight tiles when a focused agent is being inspected."""
-    if not getattr(renderer, "camera_focus_entity_name", None):
+    focus = focused_entity(env, renderer)
+    if focus is None:
         return None
     visible_tiles_for = getattr(env, "visible_tiles_for", None)
     if callable(visible_tiles_for):
         return {tuple(tile) for tile in visible_tiles_for(renderer.camera_focus_entity_name)}
     visible_tiles = getattr(env, "visible_tiles", None)
-    if not callable(visible_tiles):
+    if callable(visible_tiles):
+        return {tuple(tile) for tile in visible_tiles()}
+
+    world_position = entity_world_position(renderer, focus)
+    if world_position is None:
         return None
-    return {tuple(tile) for tile in visible_tiles()}
+    center_x, center_y = world_position
+    radius = focus_radius(env, renderer)
+    return {
+        (x, y)
+        for x in range(center_x - radius, center_x + radius + 1)
+        for y in range(center_y - radius, center_y + radius + 1)
+    }
 
 
 def flash_tinted_surface(image: Any, *, tint: tuple[int, int, int], alpha: int) -> Any:
@@ -666,25 +715,17 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
         finally:
             renderer.world_surface = previous_world_surface
 
-    # Optional overlays for branch-specific presets. If the corresponding
-    # system modules do not exist on this branch, skip these overlays.
-    try:
-        from word_play.presets.systems.containers import Container
-    except Exception:
-        Container = None
-    if Container is not None:
-        container = entity.get_component(Container)
-        if container is not None and container.is_open:
-            visible = container.visible_contents()[:4] if hasattr(container, "visible_contents") else []
-            previous_world_surface = renderer.world_surface
-            renderer.world_surface = renderer.effect_surface
-            try:
-                draw_entity_items(renderer, visible, px, py, layout_mode="grid", max_items=4)
-            finally:
-                renderer.world_surface = previous_world_surface
+    container = entity.get_component(Container)
+    if container is not None and container.is_open:
+        visible = container.visible_contents()[:4] if hasattr(container, "visible_contents") else []
+        previous_world_surface = renderer.world_surface
+        renderer.world_surface = renderer.effect_surface
+        try:
+            draw_entity_items(renderer, visible, px, py, layout_mode="grid", max_items=4)
+        finally:
+            renderer.world_surface = previous_world_surface
 
     # Inventory overlay
-    from word_play.presets.systems.inventory import Inventory
     inventory = entity.get_component(Inventory)
     if inventory is not None:
         inv_list = getattr(inventory, 'contents', [])
@@ -692,34 +733,24 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
             items = inv_list[:2]
             draw_entity_items(renderer, items, px, py, layout_mode="badges", max_items=2, scale=0.50)
 
-    try:
-        from word_play.presets.systems.crafter import Crafter
-    except Exception:
-        Crafter = None
-    if Crafter is not None:
-        crafter = entity.get_component(Crafter)
-        if crafter is not None:
-            has_inputs = len(crafter.staged_items) > 0
-            has_output = crafter.output_item is not None
-            output_already_drawn = has_output and getattr(renderable, 'overlay_sprite', None)
-            if has_inputs or has_output:
-                if crafter.staged_items:
-                    draw_entity_items(renderer, [crafter.staged_items[0]], px, py, layout_mode="corner", max_items=1, scale=0.42)
-                if not output_already_drawn:
-                    output = getattr(crafter, "output_item", None)
-                    if output:
-                        draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
+    crafter = entity.get_component(Crafter)
+    if crafter is not None:
+        has_inputs = len(crafter.staged_items) > 0
+        has_output = crafter.output_item is not None
+        output_already_drawn = has_output and getattr(renderable, 'overlay_sprite', None)
+        if has_inputs or has_output:
+            if crafter.staged_items:
+                draw_entity_items(renderer, [crafter.staged_items[0]], px, py, layout_mode="corner", max_items=1, scale=0.42)
+            if not output_already_drawn:
+                output = getattr(crafter, "output_item", None)
+                if output:
+                    draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
 
-    try:
-        from word_play.presets.systems.containers import Single_Item_Holder
-    except Exception:
-        Single_Item_Holder = None
-    if Single_Item_Holder is not None:
-        holder = entity.get_component(Single_Item_Holder)
-        if holder is not None:
-            stored = getattr(holder, 'stored_item', None)
-            if stored:
-                draw_entity_items(renderer, [stored], px, py, layout_mode="center", max_items=1, scale=0.55)
+    holder = entity.get_component(Single_Item_Holder)
+    if holder is not None:
+        stored = getattr(holder, 'stored_item', None)
+        if stored:
+            draw_entity_items(renderer, [stored], px, py, layout_mode="center", max_items=1, scale=0.55)
 
     emissive_sprite = getattr(renderable, "emissive_sprite", None)
     if emissive_sprite:
@@ -811,8 +842,6 @@ def draw_background_tile(
 
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
-        # Draw placeholder square
-        import pygame
         rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
         pygame.draw.rect(renderer.floor_surface, (40, 50, 60), rect)
         pygame.draw.rect(renderer.floor_surface, (60, 70, 80), rect, 1)
@@ -894,7 +923,7 @@ def draw_hud_panel(renderer: "Pygame_Renderer", env: "Environment", x_offset: in
     renderer.screen.blit(header, (x_offset + renderer.margin, hud_top + 16))
 
     # Controls hint - minimal
-    controls_text = "R: reset | ESC: exit"
+    controls_text = "Click agent: follow | click empty: full | R: reset | ESC: exit"
     controls = renderer.small_font.render(controls_text, True, (150, 160, 180))
     renderer.screen.blit(controls, (x_offset + renderer.margin, hud_top + 48))
 
@@ -1091,16 +1120,26 @@ def fit_wrapped_text_lines(
 
 
 def collect_speech_bubbles(env: "Environment") -> list[dict[str, Any]]:
-    """Collect speech bubbles from environment or renderable components.
+    """Collect renderer-owned speech bubble events.
 
-    Priority:
-    1. If env has speech_bubbles attribute, use those directly
-    2. Otherwise, scan entity Renderable components for last_message
+    Renderer hooks publish normal chat into env.speech_bubbles. The
+    Renderable.last_message scan is kept as a legacy fallback for older
+    examples and replay/discussion helpers.
     """
-    # If environment already has defined speech_bubbles, use them
     bubbles = list(getattr(env, "speech_bubbles", []))
     if bubbles:
-        return bubbles
+        current_step = getattr(env, "cur_step", 0)
+        visible_bubbles = []
+        for bubble in bubbles:
+            if not isinstance(bubble, dict) or "_step" not in bubble:
+                visible_bubbles.append(bubble)
+                continue
+            ttl = int(bubble.get("ttl", 1))
+            if current_step <= int(bubble["_step"]) + ttl:
+                visible_bubbles.append(bubble)
+        if hasattr(env, "__dict__"):
+            env.speech_bubbles = visible_bubbles
+        return visible_bubbles
 
     # Auto-collect from Renderable components
     for entity in getattr(env, "state", None).entities if hasattr(env, "state") else []:
@@ -1115,13 +1154,13 @@ def collect_speech_bubbles(env: "Environment") -> list[dict[str, Any]]:
 
 
 def parse_trade_message(text: str) -> dict[str, Any] | None:
-    """Parse a trade message format: TRADE:|you_offer:X|you_currency:N|they_offer:Y|they_currency:M|you_accepted:yes/no|they_accepted:yes/no|partner:NAME"""
-    if not text.startswith("TRADE:|"):
+    """Parse compact renderer trade-message formats."""
+    if not text.startswith("TRADE_SESSION:|"):
         return None
     try:
         parts = text.split("|")
-        result: dict[str, Any] = {}
-        for part in parts[1:]:  # Skip "TRADE:"
+        result: dict[str, Any] = {"_format": "session"}
+        for part in parts[1:]:
             if ":" in part:
                 key, value = part.split(":", 1)
                 result[key] = value
@@ -1130,339 +1169,467 @@ def parse_trade_message(text: str) -> dict[str, Any] | None:
         return None
 
 
-def draw_trade_bubble(
+def _trade_items_from_field(text: str) -> list[str]:
+    return [item.strip() for item in text.split(",") if item.strip() and item.strip() != "none"]
+
+
+def _clamp_rect_to_surface(rect: pygame.Rect, surface: pygame.Surface, margin: int) -> pygame.Rect:
+    x = max(margin, min(rect.x, surface.get_width() - rect.width - margin))
+    y = max(margin, min(rect.y, surface.get_height() - rect.height - margin))
+    return pygame.Rect(x, y, rect.width, rect.height)
+
+
+def _trade_session_rect(
     renderer: "Pygame_Renderer",
-    entity_position: tuple[int, int],
-    trade_data: dict[str, Any],
+    left_position: tuple[int, int],
+    right_position: tuple[int, int],
+    width: int,
+    height: int,
+) -> pygame.Rect:
+    tile_s = renderer.tile_size
+    margin = max(6, int(tile_s * 0.12))
+    left_center = (left_position[0] + tile_s // 2, left_position[1] + tile_s // 2)
+    right_center = (right_position[0] + tile_s // 2, right_position[1] + tile_s // 2)
+    mid_x = (left_center[0] + right_center[0]) // 2
+    mid_y = (left_center[1] + right_center[1]) // 2
+
+    desired = pygame.Rect(mid_x - width // 2, mid_y - height // 2, width, height)
+    return _clamp_rect_to_surface(desired, renderer.effect_surface, margin)
+
+
+def _chat_session_rect(
+    renderer: "Pygame_Renderer",
+    participant_positions: list[tuple[int, int]],
+    width: int,
+    height: int,
+) -> pygame.Rect:
+    tile_s = renderer.tile_size
+    margin = max(6, int(tile_s * 0.12))
+    centers = [(x + tile_s // 2, y + tile_s // 2) for x, y in participant_positions]
+    mid_x = sum(x for x, _ in centers) // len(centers)
+    mid_y = sum(y for _, y in centers) // len(centers)
+    desired = pygame.Rect(mid_x - width // 2, mid_y - height // 2, width, height)
+    return _clamp_rect_to_surface(desired, renderer.effect_surface, margin)
+
+
+def _chat_message_text(message: Any) -> str:
+    text = str(message).strip()
+    if text.startswith("Round ") and " - " in text:
+        text = text.split(" - ", 1)[1]
+    return text
+
+
+def _ellipsize_text(font: Any, text: str, max_width: int) -> str:
+    if font.size(text)[0] <= max_width:
+        return text
+    trimmed = text
+    while trimmed and font.size(f"{trimmed}...")[0] > max_width:
+        trimmed = trimmed[:-1].rstrip()
+    return f"{trimmed}..." if trimmed else "..."
+
+
+def draw_chat_session_window(
+    renderer: "Pygame_Renderer",
+    participant_positions: list[tuple[int, int]],
+    participant_names: list[str],
+    messages: list[Any],
     scale: float,
 ) -> None:
-    """Draw an optimized fantasy trade window above the trading agent.
+    if not participant_positions:
+        return
 
-    Features:
-    - Smart positioning that avoids screen edges
-    - Dynamic sizing based on item count
-    - Enhanced parchment theme with shadows
-    - Proper sprite scaling and centering
-    """
-    from .assets import get_or_load_image
-
-    px, py = entity_position
     tile_s = renderer.tile_size
-    center_x = px + tile_s // 2
-    agent_bottom = py + tile_s
+    surface_w = renderer.effect_surface.get_width()
+    margin = max(8, int(tile_s * 0.14))
+    panel_width = min(max(int(tile_s * 3.25 * scale), 190), max(96, surface_w - margin * 2))
+    pad_x = max(8, int(tile_s * 0.13 * scale))
+    pad_y = max(7, int(tile_s * 0.11 * scale))
+    title_font = pygame.font.SysFont(None, max(13, int(tile_s * 0.20)), bold=True)
+    body_font = pygame.font.SysFont(None, max(12, int(tile_s * 0.18)))
+    line_gap = max(2, int(tile_s * 0.04))
+    max_text_width = panel_width - pad_x * 2
 
-    # Parse trade data from viewer's perspective
-    you_offer = trade_data.get("you_offer", "none")
-    you_currency = trade_data.get("you_currency", "").strip()
-    they_offer = trade_data.get("they_offer", "none")
-    they_currency = trade_data.get("they_currency", "").strip()
-    you_accepted = trade_data.get("you_accepted", "no") == "yes"
-    they_accepted = trade_data.get("they_accepted", "no") == "yes"
-    partner = trade_data.get("partner", "Partner")
+    title = "Private: " + ", ".join(participant_names)
+    visible_messages = [_chat_message_text(message) for message in messages[-4:]]
+    wrapped_messages = []
+    for message in visible_messages:
+        wrapped_messages.append(wrap_text_lines(body_font, message, max_width=max_text_width)[:2])
 
-    # Parse items from offers
-    your_items = [i.strip() for i in you_offer.split(",") if i.strip() and i.strip() != "none"]
-    their_items = [i.strip() for i in they_offer.split(",") if i.strip() and i.strip() != "none"]
-    entity_lookup = trade_data.get("_entity_lookup", {})
+    title_h = title_font.get_height()
+    body_h = sum(len(lines) * body_font.get_height() for lines in wrapped_messages)
+    gap_h = max(0, len(wrapped_messages) - 1) * line_gap
+    panel_height = max(int(tile_s * 1.10 * scale), pad_y * 2 + title_h + line_gap + body_h + gap_h)
+    panel_rect = _chat_session_rect(renderer, participant_positions, panel_width, panel_height)
 
-    # Calculate dynamic scale based on tile size (base: 64px)
-    base_tile = 64
-    dynamic_scale = scale * (tile_s / base_tile)
+    surface = renderer.effect_surface
+    pygame.draw.rect(surface, (245, 239, 224), panel_rect, border_radius=max(8, int(tile_s * 0.15)))
+    pygame.draw.rect(surface, (67, 55, 45), panel_rect, width=2, border_radius=max(8, int(tile_s * 0.15)))
+    title_rect = pygame.Rect(panel_rect.left, panel_rect.top, panel_rect.width, pad_y + title_h + 3)
+    pygame.draw.rect(surface, (82, 64, 49), title_rect, border_radius=max(8, int(tile_s * 0.15)))
+    title_surface = title_font.render(title, True, (255, 238, 190))
+    surface.blit(
+        title_surface,
+        (
+            panel_rect.centerx - title_surface.get_width() // 2,
+            panel_rect.top + max(3, pad_y // 2),
+        ),
+    )
 
-    # Dynamic sizing based on item count
-    max_your_items = min(len(your_items), 3)
-    max_their_items = min(len(their_items), 3)
-    has_currency = bool(you_currency or they_currency)
+    text_y = title_rect.bottom + line_gap
+    for lines in wrapped_messages:
+        for line in lines:
+            text_surface = body_font.render(line, True, (30, 25, 22))
+            surface.blit(text_surface, (panel_rect.left + pad_x, text_y))
+            text_y += body_font.get_height()
+        text_y += line_gap
 
-    # Calculate item slot size based on tile size
-    item_size = int(tile_s * 0.45)  # ~29px for 64px tile
-    item_spacing = int(tile_s * 0.08)  # ~5px
 
-    # Calculate window dimensions
-    header_height = int(tile_s * 0.5)  # ~32px
-    item_row_height = item_size + int(tile_s * 0.15)  # ~39px
-    currency_row_height = int(tile_s * 0.4) if has_currency else 0  # ~26px
-    footer_height = int(tile_s * 0.2)  # ~13px
-    pad = int(tile_s * 0.12)  # ~8px
+def _draw_trade_currency(renderer: "Pygame_Renderer", x: int, y: int, amount: str, font: Any) -> None:
+    if not amount:
+        return
+    radius = max(6, int(renderer.tile_size * 0.12))
+    center = (x + radius, y + radius)
+    pygame.draw.circle(renderer.effect_surface, (111, 70, 20), center, radius)
+    pygame.draw.circle(renderer.effect_surface, (241, 188, 68), center, max(2, radius - 2))
+    pygame.draw.circle(renderer.effect_surface, (255, 230, 132), (center[0] - radius // 3, center[1] - radius // 3), max(1, radius // 4))
+    label = font.render(f"{amount}g", True, (72, 40, 18))
+    renderer.effect_surface.blit(label, (x + radius * 2 + 3, y + radius - label.get_height() // 2))
 
-    # Comfortable width based on tiles
-    min_width = int(tile_s * 4.5)  # ~288px
-    max_width = int(tile_s * 5.5)  # ~352px
 
-    # Calculate required width based on items
-    items_width = max(
-        max_your_items * (item_size + item_spacing),
-        max_their_items * (item_size + item_spacing)
-    ) + int(tile_s * 1.5)  # arrow + margins
+def _trade_currency_width(renderer: "Pygame_Renderer", amount: str, font: Any) -> int:
+    if not amount:
+        return 0
+    radius = max(6, int(renderer.tile_size * 0.12))
+    return radius * 2 + 3 + font.size(f"{amount}g")[0]
 
-    bubble_width = max(min_width, min(max_width, items_width))
-    bubble_height = header_height + item_row_height + currency_row_height + footer_height + (pad * 3)
 
-    # Smart positioning - try above first, then below if not enough space
-    world_height = renderer.effect_surface.get_height()
-    desired_y_above = py - bubble_height - int(tile_s * 0.25)
-    desired_y_below = agent_bottom + int(tile_s * 0.15)
+def _fit_trade_item_sprite(sprite: pygame.Surface, max_size: int) -> pygame.Surface:
+    visible_rect = sprite.get_bounding_rect()
+    if visible_rect.width <= 0 or visible_rect.height <= 0:
+        visible_rect = sprite.get_rect()
+    cropped = sprite.subsurface(visible_rect)
+    scale_factor = max_size / max(visible_rect.width, visible_rect.height)
+    target_size = (
+        max(1, int(round(visible_rect.width * scale_factor))),
+        max(1, int(round(visible_rect.height * scale_factor))),
+    )
+    return pygame.transform.scale(cropped, target_size)
 
-    if desired_y_above >= int(tile_s * 0.3):  # Above agent if enough space
-        bubble_y = desired_y_above
-        pointer_from_top = False
-    else:  # Below agent
-        bubble_y = min(desired_y_below, world_height - bubble_height - int(tile_s * 0.3))
-        pointer_from_top = True
 
-    # Horizontal positioning with edge detection
-    desired_x = center_x - bubble_width // 2
-    world_width = renderer.effect_surface.get_width()
-    bubble_x = max(int(tile_s * 0.15), min(desired_x, world_width - bubble_width - int(tile_s * 0.15)))
+def _draw_trade_offer_grid(
+    renderer: "Pygame_Renderer",
+    rect: pygame.Rect,
+    items: list[str],
+    entity_lookup: dict[str, Entity],
+    font: Any,
+    text_color: tuple[int, int, int],
+) -> None:
+    surface = renderer.effect_surface
+    pygame.draw.rect(surface, (47, 31, 21), rect)
+    pygame.draw.rect(surface, (83, 55, 31), rect.inflate(-2, -2))
+    pygame.draw.rect(surface, (32, 21, 15), rect, width=2)
 
-    bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_width, bubble_height)
+    cell_size = rect.width // 2
+    grid_color = (173, 113, 52)
+    pygame.draw.line(surface, grid_color, (rect.left + cell_size, rect.top), (rect.left + cell_size, rect.bottom), width=2)
+    pygame.draw.line(surface, grid_color, (rect.left, rect.top + cell_size), (rect.right, rect.top + cell_size), width=2)
 
-    # Colors - Parchment/Fantasy trading theme
-    PARCHMENT_BG = (42, 38, 32)      # Warm dark parchment
-    PARCHMENT_LIGHT = (55, 50, 42)   # Lighter for inner
-    PARCHMENT_DARK = (32, 28, 24)    # Dark for header bar
-    GOLD = (218, 165, 32)            # Royal gold
-    GOLD_DIM = (160, 120, 25)        # Dimmed gold for borders
-    GOLD_BRIGHT = (255, 215, 100)    # Bright gold for highlights
-    COPPER = (184, 115, 51)          # Copper for inactive
-    TEXT_CREAM = (240, 235, 220)     # Cream text
-    TEXT_GOLD = (255, 220, 120)      # Gold text for headers
+    visible_items = items[:4]
+    if len(items) > 4:
+        visible_items = items[:3] + ["..."]
 
-    # Background - parchment with subtle gradient
-    pygame.draw.rect(renderer.effect_surface, PARCHMENT_BG, bubble_rect, border_radius=int(12 * scale))
-    # Inner highlight for depth
-    inner_rect = bubble_rect.inflate(int(-4 * scale), int(-4 * scale))
-    pygame.draw.rect(renderer.effect_surface, PARCHMENT_LIGHT, inner_rect, border_radius=int(10 * scale))
+    for idx, item_name in enumerate(visible_items):
+        col = idx % 2
+        row = idx // 2
+        cell_rect = pygame.Rect(rect.left + col * cell_size, rect.top + row * cell_size, cell_size, cell_size)
+        inset = max(4, cell_size // 8)
+        content_rect = cell_rect.inflate(-inset * 2, -inset * 2)
 
-    # Border - gold when accepted, copper/bronze when not
-    if you_accepted and they_accepted:
-        border_color = GOLD_BRIGHT
-        glow_color = (100, 255, 100, 60)
-    elif you_accepted:
-        border_color = GOLD
-        glow_color = (255, 200, 50, 50)
-    else:
-        border_color = COPPER
-        glow_color = (255, 150, 50, 40)
-    pygame.draw.rect(renderer.effect_surface, border_color, bubble_rect, width=int(3 * scale), border_radius=int(12 * scale))
-    # Outer glow effect
-    glow_rect = bubble_rect.inflate(int(8 * scale), int(8 * scale))
-    glow_surface = pygame.Surface((glow_rect.width, glow_rect.height), pygame.SRCALPHA)
-    pygame.draw.rect(glow_surface, glow_color, pygame.Rect(0, 0, glow_rect.width, glow_rect.height), border_radius=int(14 * scale))
-    renderer.effect_surface.blit(glow_surface, (glow_rect.x, glow_rect.y), special_flags=pygame.BLEND_RGBA_ADD)
-    
-    # Decorative corner flourishes
-    def draw_corner_dot(x, y):
-        pygame.draw.circle(renderer.effect_surface, border_color, (x, y), int(3 * scale))
-        pygame.draw.circle(renderer.effect_surface, GOLD_BRIGHT, (x, y), int(1.5 * scale))
-    
-    corner_offset = int(8 * scale)
-    draw_corner_dot(bubble_rect.left + corner_offset, bubble_rect.top + corner_offset)
-    draw_corner_dot(bubble_rect.right - corner_offset, bubble_rect.top + corner_offset)
-    draw_corner_dot(bubble_rect.left + corner_offset, bubble_rect.bottom - corner_offset)
-    draw_corner_dot(bubble_rect.right - corner_offset, bubble_rect.bottom - corner_offset)
-
-    # Fonts - BIGGER and clearer
-    font_size = max(12, int(tile_s * 0.28))  # was 10, now 16
-    try:
-        font = pygame.font.SysFont("Arial", font_size, bold=True)
-    except:
-        font = pygame.font.SysFont(None, font_size, bold=True)
-    small_font = pygame.font.SysFont(None, max(10, int(tile_s * 0.22)))  # was 9, now 14
-
-    text_color = (220, 215, 200)
-    accent_color = (180, 145, 85)
-    gold_color = (255, 215, 90)
-
-    y_offset = bubble_rect.top + int(8 * scale)
-
-    # Header bar with partner name - decorative title
-    header_height = int(24 * scale)
-    header_rect = pygame.Rect(bubble_rect.left + int(3*scale), y_offset, 
-                              bubble_rect.width - int(6*scale), header_height)
-    # Header background with gradient effect
-    pygame.draw.rect(renderer.effect_surface, PARCHMENT_DARK, header_rect, 
-                     border_radius=int(6 * scale))
-    # Header border
-    pygame.draw.rect(renderer.effect_surface, border_color, header_rect, 
-                     width=int(1 * scale), border_radius=int(6 * scale))
-    
-    # Title text
-    title_text = f"TRADE: {partner}"
-    title_surface = small_font.render(title_text, True, TEXT_GOLD)
-    title_x = bubble_rect.centerx - title_surface.get_width() // 2
-    title_y = y_offset + (header_height - title_surface.get_height()) // 2
-    renderer.effect_surface.blit(title_surface, (title_x, title_y))
-    y_offset += header_height + int(8 * scale)
-
-    # Items row - show YOUR items (what you're offering) - larger slots
-    item_size = int(tile_s * 0.45)  # Was 16, now 28 for bigger sprites
-    item_spacing = int(tile_s * 0.08)  # More spacing
-    max_visible = 3  # Show max 3 items instead of 2
-
-    # Calculate total width for centering
-    left_items_width = min(len(your_items), max_visible) * (item_size + item_spacing) - item_spacing
-    right_items_width = min(len(their_items), max_visible) * (item_size + item_spacing) - item_spacing
-
-    # Items container - centered in the bubble
-    # Calculate left section start position (centered in left half)
-    left_section_width = left_items_width + (20 * scale)
-    items_x = bubble_rect.centerx - int(30 * scale) - left_section_width
-    items_y = y_offset
-
-    # Draw your items on the left
-    displayed_items = your_items[:max_visible]
-    overflow = max(0, len(your_items) - max_visible)
-
-    x_pos = items_x
-    # Item slot colors - parchment theme
-    SLOT_BG = (35, 42, 35)           # Dark green-gray for empty slot
-    SLOT_BORDER = (100, 90, 70)      # Brown border
-    SLOT_HIGHLIGHT = (70, 75, 60)    # Inner highlight
-
-    # Gold color for text
-    GOLD = (218, 165, 32)            # Royal gold
-    GOLD_BRIGHT = (255, 215, 100)    # Bright gold for highlights
-
-    for item_name in displayed_items:
-        item_rect = pygame.Rect(x_pos, items_y, item_size, item_size)
-        # Draw slot background with border
-        pygame.draw.rect(renderer.effect_surface, SLOT_BG, item_rect, border_radius=int(4 * scale))
-        pygame.draw.rect(renderer.effect_surface, SLOT_BORDER, item_rect, width=2, border_radius=int(4 * scale))
-        # Inner highlight
-        inner_slot = item_rect.inflate(int(-4 * scale), int(-4 * scale))
-        pygame.draw.rect(renderer.effect_surface, SLOT_HIGHLIGHT, inner_slot, border_radius=int(2 * scale))
-
-        # Try to get sprite - larger display area for better visibility
-        item_entity = entity_lookup.get(item_name)
-        sprite = None
-        if item_entity:
-            renderable = item_entity.get_component(Renderable)
-            if renderable and renderable.sprite_path:
-                # Use full slot size minus padding for sprite
-                sprite_size = item_size - 8
-                sprite = get_scaled_image(renderer, renderable.sprite_path, sprite_size, sprite_size)
-        if sprite:
-            # Center the sprite in the slot
-            sprite_x = x_pos + (item_size - sprite.get_width()) // 2
-            sprite_y = items_y + (item_size - sprite.get_height()) // 2
-            renderer.effect_surface.blit(sprite, (sprite_x, sprite_y))
-        else:
-            # Fallback: abbreviation
-            short = item_name[:2].upper()
-            abbrev_surf = small_font.render(short, True, (180, 180, 180))
-            center_x = x_pos + item_size // 2 - abbrev_surf.get_width() // 2
-            center_y = items_y + item_size // 2 - abbrev_surf.get_height() // 2
-            renderer.effect_surface.blit(abbrev_surf, (center_x, center_y))
-
-        x_pos += item_size + item_spacing
-
-    if overflow > 0:
-        # +N text
-        overflow_text = f"+{overflow}"
-        overflow_surf = font.render(overflow_text, True, text_color)
-        renderer.effect_surface.blit(overflow_surf, (x_pos, items_y + (item_size - overflow_surf.get_height()) // 2))
-        x_pos += overflow_surf.get_width() + int(4 * scale)
-
-    # Show "->" separator
-    arrow_surf = small_font.render("→", True, accent_color)
-    arrow_x = bubble_rect.centerx - arrow_surf.get_width() // 2
-    renderer.effect_surface.blit(arrow_surf, (arrow_x, items_y + (item_size - arrow_surf.get_height()) // 2))
-
-    # Their items on the right side (what you're receiving)
-    their_displayed = their_items[:max_visible]
-    their_overflow = max(0, len(their_items) - max_visible)
-
-    x_pos_right = bubble_rect.right - pad
-    if their_overflow > 0:
-        x_pos_right -= font.size(f"+{their_overflow}")[0] + int(4 * scale)
-
-    # Draw right-side items from right to left (same parchment theme)
-    for i, item_name in enumerate(reversed(their_displayed)):
-        item_rect = pygame.Rect(x_pos_right - item_size, items_y, item_size, item_size)
-        pygame.draw.rect(renderer.effect_surface, SLOT_BG, item_rect, border_radius=int(4 * scale))
-        pygame.draw.rect(renderer.effect_surface, SLOT_BORDER, item_rect, width=2, border_radius=int(4 * scale))
-        inner_slot = item_rect.inflate(int(-4 * scale), int(-4 * scale))
-        pygame.draw.rect(renderer.effect_surface, SLOT_HIGHLIGHT, inner_slot, border_radius=int(2 * scale))
+        if item_name == "...":
+            ellipsis_font = pygame.font.SysFont(None, max(18, int(renderer.tile_size * 0.30)), bold=True)
+            shadow = ellipsis_font.render("...", True, (26, 17, 11))
+            ellipsis = ellipsis_font.render("...", True, text_color)
+            surface.blit(
+                shadow,
+                (
+                    cell_rect.centerx - shadow.get_width() // 2 + 1,
+                    cell_rect.centery - shadow.get_height() // 2 + 1,
+                ),
+            )
+            surface.blit(
+                ellipsis,
+                (
+                    cell_rect.centerx - ellipsis.get_width() // 2,
+                    cell_rect.centery - ellipsis.get_height() // 2,
+                ),
+            )
+            continue
 
         item_entity = entity_lookup.get(item_name)
         sprite = None
         if item_entity:
             renderable = item_entity.get_component(Renderable)
             if renderable and renderable.sprite_path:
-                # Same larger sprite size for right side
-                sprite_size = item_size - 8
-                sprite = get_scaled_image(renderer, renderable.sprite_path, sprite_size, sprite_size)
+                base_sprite = get_or_load_image(renderer, renderable.sprite_path)
+                if base_sprite:
+                    sprite_size = max(12, int(min(content_rect.width, content_rect.height) * 0.86))
+                    sprite = _fit_trade_item_sprite(base_sprite, sprite_size)
+
         if sprite:
-            # Center the sprite in the slot
-            sprite_x = x_pos_right - item_size + (item_size - sprite.get_width()) // 2
-            sprite_y = items_y + (item_size - sprite.get_height()) // 2
-            renderer.effect_surface.blit(sprite, (sprite_x, sprite_y))
-        else:
-            short = item_name[:2].upper()
-            abbrev_surf = small_font.render(short, True, (180, 180, 180))
-            center_x = x_pos_right - item_size // 2 - abbrev_surf.get_width() // 2
-            center_y = items_y + item_size // 2 - abbrev_surf.get_height() // 2
-            renderer.effect_surface.blit(abbrev_surf, (center_x, center_y))
+            surface.blit(
+                sprite,
+                (
+                    content_rect.centerx - sprite.get_width() // 2,
+                    content_rect.centery - sprite.get_height() // 2,
+                ),
+            )
+            continue
 
-        x_pos_right -= item_size + item_spacing
+        short = item_name[:2].upper()
+        label = font.render(short, True, (240, 222, 166))
+        surface.blit(
+            label,
+            (
+                cell_rect.centerx - label.get_width() // 2,
+                cell_rect.centery - label.get_height() // 2,
+            ),
+        )
 
-    if their_overflow > 0:
-        overflow_text = f"+{their_overflow}"
-        overflow_surf = font.render(overflow_text, True, text_color)
-        renderer.effect_surface.blit(overflow_surf, (x_pos_right - overflow_surf.get_width(), items_y + (item_size - overflow_surf.get_height()) // 2))
+
+def _draw_trade_label(surface: pygame.Surface, font: Any, label: str, center_x: int, y: int) -> None:
+    text = font.render(label, True, (255, 235, 156))
+    shadow = font.render(label, True, (26, 17, 11))
+    x = center_x - text.get_width() // 2
+    surface.blit(shadow, (x, y + 1))
+    surface.blit(text, (x, y))
 
 
-    # Currency row
-    if you_currency or they_currency:
-        y_offset += item_size + int(8 * scale)
+def _draw_trade_name_section(
+    renderer: "Pygame_Renderer",
+    rect: pygame.Rect,
+    font: Any,
+    label: str,
+) -> None:
+    section = rect.copy()
+    pygame.draw.rect(renderer.effect_surface, (55, 34, 20), section)
+    pygame.draw.rect(renderer.effect_surface, (151, 94, 43), section, width=1)
+    shine = pygame.Rect(section.left + 1, section.top + 1, max(0, section.width - 2), max(1, section.height // 3))
+    pygame.draw.rect(renderer.effect_surface, (97, 61, 31), shine)
+    _draw_trade_label(
+        renderer.effect_surface,
+        font,
+        label,
+        section.centerx,
+        section.centery - font.get_height() // 2,
+    )
 
-    # Draw currency you offer
-    if you_currency:
-        coin_size = int(20 * scale)
-        coin_x = bubble_rect.centerx - int(50 * scale) - coin_size
-        coin_rect = pygame.Rect(coin_x, y_offset, coin_size, coin_size)
-        # Gold coin with gradient
-        pygame.draw.ellipse(renderer.effect_surface, (180, 140, 30), coin_rect)
-        pygame.draw.ellipse(renderer.effect_surface, (255, 220, 80), coin_rect.inflate(int(-2*scale), int(-2*scale)))
-        pygame.draw.ellipse(renderer.effect_surface, (200, 160, 40), coin_rect, width=int(2*scale))
-        # "G" icon
-        coin_font = pygame.font.SysFont(None, int(12 * scale), bold=True)
-        coin_surf = coin_font.render("G", True, (80, 60, 20))
-        coin_text_x = coin_rect.centerx - coin_surf.get_width() // 2
-        coin_text_y = coin_rect.centery - coin_surf.get_height() // 2
-        renderer.effect_surface.blit(coin_surf, (coin_text_x, coin_text_y))
 
-    # Draw acceptance indicators
-    if you_accepted:
-        check_text = "OK" if not they_accepted else "DONE"
-        check_color = GOLD_BRIGHT if they_accepted else GOLD
-        check_surf = font.render(check_text, True, check_color)
-        check_x = bubble_rect.centerx - check_surf.get_width() // 2
-        check_y = y_offset - int(4 * scale)
-        renderer.effect_surface.blit(check_surf, (check_x, check_y))
+def _draw_trade_log_line(
+    surface: pygame.Surface,
+    font: Any,
+    text: str,
+    x: int,
+    y: int,
+    max_width: int,
+) -> None:
+    speaker_color = (255, 235, 156)
+    message_color = (246, 231, 196)
+    shadow_color = (28, 19, 13)
+    if ": " not in text:
+        line = _ellipsize_text(font, text, max_width)
+        shadow = font.render(line, True, shadow_color)
+        rendered = font.render(line, True, message_color)
+        surface.blit(shadow, (x + 1, y + 1))
+        surface.blit(rendered, (x, y))
+        return
 
-    # Draw smart pointer - adapts to bubble position
-    pointer_width = int(tile_s * 0.15)  # ~10px
-    pointer_height = int(tile_s * 0.12)  # ~8px
+    speaker, message = text.split(": ", 1)
+    speaker_text = f"{speaker}: "
+    speaker_width = font.size(speaker_text)[0]
+    message_text = _ellipsize_text(font, message, max(12, max_width - speaker_width))
+    speaker_shadow = font.render(speaker_text, True, shadow_color)
+    message_shadow = font.render(message_text, True, shadow_color)
+    speaker_rendered = font.render(speaker_text, True, speaker_color)
+    message_rendered = font.render(message_text, True, message_color)
+    surface.blit(speaker_shadow, (x + 1, y + 1))
+    surface.blit(message_shadow, (x + speaker_width + 1, y + 1))
+    surface.blit(speaker_rendered, (x, y))
+    surface.blit(message_rendered, (x + speaker_width, y))
 
-    if pointer_from_top:
-        # Pointer pointing UP (bubble is below agent)
-        tail = [
-            (center_x, bubble_rect.top + 2),
-            (center_x - pointer_width // 2, bubble_rect.top - pointer_height),
-            (center_x + pointer_width // 2, bubble_rect.top - pointer_height),
-        ]
+
+def _draw_trade_window_bg(renderer: "Pygame_Renderer", rect: pygame.Rect) -> None:
+    bg = get_scaled_image(renderer, RUSTIC_TRADE_WINDOW_SPRITE, rect.width, rect.height)
+    if bg:
+        renderer.effect_surface.blit(bg, rect)
     else:
-        # Pointer pointing DOWN (bubble is above agent)
-        tail = [
-            (center_x, bubble_rect.bottom - 2),
-            (center_x - pointer_width // 2, bubble_rect.bottom + pointer_height),
-            (center_x + pointer_width // 2, bubble_rect.bottom + pointer_height),
-        ]
+        pygame.draw.rect(renderer.effect_surface, (118, 72, 35), rect)
+        pygame.draw.rect(renderer.effect_surface, (222, 184, 118), rect.inflate(-18, -16))
 
-    pygame.draw.polygon(renderer.effect_surface, (32, 38, 48), tail)
-    pygame.draw.polygon(renderer.effect_surface, border_color, tail, width=int(tile_s * 0.03))
+
+def _public_trade_offer_rect(
+    renderer: "Pygame_Renderer",
+    entity_position: tuple[int, int],
+    width: int,
+    height: int,
+) -> pygame.Rect:
+    tile_s = renderer.tile_size
+    margin = max(6, int(tile_s * 0.12))
+    center_x = entity_position[0] + tile_s // 2
+    above = pygame.Rect(center_x - width // 2, entity_position[1] - height - margin, width, height)
+    if above.top >= margin:
+        return _clamp_rect_to_surface(above, renderer.effect_surface, margin)
+    below = pygame.Rect(center_x - width // 2, entity_position[1] + tile_s + margin, width, height)
+    return _clamp_rect_to_surface(below, renderer.effect_surface, margin)
+
+
+def draw_public_trade_offer_window(
+    renderer: "Pygame_Renderer",
+    entity_name: str,
+    entity_position: tuple[int, int],
+    offer: Public_Trade_Offer,
+    entity_lookup: dict[str, Entity],
+    scale: float,
+) -> None:
+    tile_s = renderer.tile_size
+    title_font = pygame.font.SysFont(None, max(13, int(tile_s * 0.19)), bold=True)
+    item_font = pygame.font.SysFont(None, max(11, int(tile_s * 0.18)), bold=True)
+    gold = (245, 214, 115)
+
+    cell_size = max(18, int(tile_s * 0.42 * scale))
+    grid_size = cell_size * 2
+    pad_x = max(9, int(tile_s * 0.13 * scale))
+    pad_top = max(10, int(tile_s * 0.15 * scale))
+    label_h = title_font.get_height()
+    gap = max(3, int(tile_s * 0.05 * scale))
+    name_h = label_h + max(4, int(tile_s * 0.06 * scale))
+    currency_h = max(15, int(tile_s * 0.20 * scale)) if offer.currency > 0 else 0
+    panel_width = max(grid_size + pad_x * 2, int(tile_s * 1.28 * scale))
+    panel_height = pad_top + name_h + gap + grid_size + gap + currency_h + max(8, int(tile_s * 0.10 * scale))
+    panel_rect = _public_trade_offer_rect(renderer, entity_position, panel_width, panel_height)
+
+    _draw_trade_window_bg(renderer, panel_rect)
+    label_h = title_font.get_height()
+    label_y = panel_rect.top + max(7, int(tile_s * 0.10 * scale))
+    name_rect = pygame.Rect(
+        panel_rect.centerx - grid_size // 2,
+        label_y,
+        grid_size,
+        name_h,
+    )
+    _draw_trade_name_section(renderer, name_rect, title_font, entity_name)
+
+    grid_rect = pygame.Rect(
+        panel_rect.centerx - grid_size // 2,
+        name_rect.bottom + gap,
+        grid_size,
+        grid_size,
+    )
+    _draw_trade_offer_grid(renderer, grid_rect, [item.name for item in offer.items], entity_lookup, item_font, gold)
+
+    if offer.currency > 0:
+        currency_y = grid_rect.bottom + gap
+        currency_width = _trade_currency_width(renderer, f"{offer.currency:g}", item_font)
+        _draw_trade_currency(renderer, grid_rect.centerx - currency_width // 2, currency_y, f"{offer.currency:g}", item_font)
+
+
+def draw_trade_session_window(
+    renderer: "Pygame_Renderer",
+    left_position: tuple[int, int],
+    right_position: tuple[int, int],
+    trade_data: dict[str, Any],
+    entity_lookup: dict[str, Entity],
+    scale: float,
+) -> None:
+    tile_s = renderer.tile_size
+    left_name = trade_data.get("left", "Trader")
+    right_name = trade_data.get("right", "Trader")
+    left_items = _trade_items_from_field(trade_data.get("left_offer", "none"))
+    right_items = _trade_items_from_field(trade_data.get("right_offer", "none"))
+    left_currency = trade_data.get("left_currency", "").strip()
+    right_currency = trade_data.get("right_currency", "").strip()
+    messages = [_chat_message_text(message) for message in list(trade_data.get("messages", []))[-2:]]
+
+    title_font = pygame.font.SysFont(None, max(13, int(tile_s * 0.20)), bold=True)
+    item_font = pygame.font.SysFont(None, max(11, int(tile_s * 0.18)), bold=True)
+    status_font = pygame.font.SysFont(None, max(13, int(tile_s * 0.20)), bold=True)
+    log_font = pygame.font.SysFont(None, max(12, int(tile_s * 0.18)), bold=True)
+    gold = (245, 214, 115)
+
+    pad_x = max(8, int(tile_s * 0.12))
+    surface_w = renderer.effect_surface.get_width()
+    surface_margin = max(8, int(tile_s * 0.14))
+    target_width = int(tile_s * (4.10 if messages else 3.55) * scale)
+    available_width = max(96, surface_w - surface_margin * 2)
+    panel_width = min(target_width, available_width)
+    log_line_gap = max(1, int(tile_s * 0.02))
+    log_lines = messages
+    log_height = 0
+    if log_lines:
+        log_height = max(int(tile_s * 0.42), len(log_lines) * log_font.get_height() + max(0, len(log_lines) - 1) * log_line_gap + 8)
+    panel_height = max(int(tile_s * 1.62 * scale), 108) + log_height
+    panel_rect = _trade_session_rect(renderer, left_position, right_position, panel_width, panel_height)
+
+    _draw_trade_window_bg(renderer, panel_rect)
+
+    center_gap = max(7, int(tile_s * 0.10))
+    label_y = panel_rect.top + max(7, int(tile_s * 0.10))
+
+    left_area_left = panel_rect.left + pad_x
+    left_area_right = panel_rect.centerx - center_gap
+    right_area_left = panel_rect.centerx + center_gap
+    right_area_right = panel_rect.right - pad_x
+    grid_area_width = min(left_area_right - left_area_left, right_area_right - right_area_left)
+    cell_size = max(18, min(int(tile_s * 0.42), grid_area_width // 2))
+    grid_size = cell_size * 2
+    name_h = title_font.get_height() + max(4, int(tile_s * 0.06))
+    grid_y = label_y + name_h + max(3, int(tile_s * 0.04))
+    bottom_reserved = log_height + max(8, int(tile_s * 0.10))
+    currency_y = min(
+        panel_rect.bottom - bottom_reserved - max(21, int(tile_s * 0.29)),
+        grid_y + grid_size + max(3, int(tile_s * 0.05)),
+    )
+
+    divider_top = panel_rect.top + max(8, int(tile_s * 0.12))
+    divider_bottom = panel_rect.bottom - bottom_reserved
+    pygame.draw.line(renderer.effect_surface, (139, 90, 44, 120), (panel_rect.centerx, divider_top), (panel_rect.centerx, divider_bottom), width=2)
+
+    left_grid = pygame.Rect(left_area_left + max(0, (left_area_right - left_area_left - grid_size) // 2), grid_y, grid_size, grid_size)
+    right_grid = pygame.Rect(right_area_left + max(0, (right_area_right - right_area_left - grid_size) // 2), grid_y, grid_size, grid_size)
+    _draw_trade_name_section(renderer, pygame.Rect(left_grid.left, label_y, left_grid.width, name_h), title_font, left_name)
+    _draw_trade_name_section(renderer, pygame.Rect(right_grid.left, label_y, right_grid.width, name_h), title_font, right_name)
+    _draw_trade_offer_grid(renderer, left_grid, left_items, entity_lookup, item_font, gold)
+    _draw_trade_offer_grid(renderer, right_grid, right_items, entity_lookup, item_font, gold)
+
+    left_currency_width = _trade_currency_width(renderer, left_currency, item_font)
+    _draw_trade_currency(renderer, left_grid.centerx - left_currency_width // 2, currency_y, left_currency, item_font)
+    if right_currency:
+        right_currency_width = _trade_currency_width(renderer, right_currency, item_font)
+        _draw_trade_currency(renderer, right_grid.centerx - right_currency_width // 2, currency_y, right_currency, item_font)
+
+    if trade_data.get("accepted") == "yes":
+        done = status_font.render("DONE", True, (72, 96, 44))
+        renderer.effect_surface.blit(done, (panel_rect.centerx - done.get_width() // 2, panel_rect.bottom - bottom_reserved - int(tile_s * 0.26)))
+
+    if log_lines:
+        log_rect = pygame.Rect(
+            panel_rect.left + pad_x,
+            panel_rect.bottom - log_height - max(4, int(tile_s * 0.04)),
+            panel_rect.width - pad_x * 2,
+            log_height,
+        )
+        pygame.draw.rect(renderer.effect_surface, (47, 31, 21), log_rect)
+        pygame.draw.rect(renderer.effect_surface, (151, 94, 43), log_rect, width=1)
+        line_y = log_rect.top + max(4, int(tile_s * 0.04))
+        for line in log_lines:
+            _draw_trade_log_line(
+                renderer.effect_surface,
+                log_font,
+                line,
+                log_rect.left + 4,
+                line_y,
+                log_rect.width - 8,
+            )
+            line_y += log_font.get_height() + log_line_gap
 
 
 def draw_speech_bubbles(
@@ -1472,13 +1639,65 @@ def draw_speech_bubbles(
 ) -> None:
     """Draw speech bubbles above entities using rounded rects and tail polygons."""
     speech_bubbles = collect_speech_bubbles(env)
+
+    # Build entity lookup for getting speech_bubble_scale.
+    entities = list(getattr(getattr(env, "state", None), "entities", []))
+    entity_by_name = {entity.name: entity for entity in entities}
+    entity_lookup = dict(entity_by_name)
+    for owner in entity_by_name.values():
+        for component in owner.components.values():
+            for attr in ("contents", "inventory", "items"):
+                items = getattr(component, attr, None)
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, Entity):
+                            entity_lookup[item.name] = item
+
+    for entity_name, entity in entity_by_name.items():
+        if entity_name not in entity_positions:
+            continue
+        offer = entity.get_component(Public_Trade_Offer)
+        if offer is not None and offer.active:
+            r = entity.get_component(Renderable)
+            scale = getattr(r, "speech_bubble_scale", 1.0) if r else 1.0
+            draw_public_trade_offer_window(
+                renderer,
+                entity_name,
+                entity_positions[entity_name],
+                offer,
+                entity_lookup,
+                scale,
+            )
+
     if not speech_bubbles:
         return
 
-    # Build entity lookup for getting speech_bubble_scale
-    entity_by_name = {e.name: e for e in getattr(env, "state", None).entities if hasattr(env, "state")}
-
     for bubble in speech_bubbles:
+        if isinstance(bubble, dict) and bubble.get("_kind") == "chat_session":
+            participant_names = [str(name) for name in bubble.get("participant_names", [])]
+            participant_positions = [
+                entity_positions[name]
+                for name in participant_names
+                if name in entity_positions
+            ]
+            if participant_positions:
+                scales = []
+                for name in participant_names:
+                    entity = entity_by_name.get(name)
+                    if entity is None:
+                        continue
+                    renderable = entity.get_component(Renderable)
+                    if renderable is not None:
+                        scales.append(getattr(renderable, "speech_bubble_scale", 1.0))
+                draw_chat_session_window(
+                    renderer,
+                    participant_positions,
+                    participant_names,
+                    list(bubble.get("messages", [])),
+                    min(scales) if scales else 1.0,
+                )
+            continue
+
         entity_name = bubble.get("entity_name")
         text = str(bubble.get("text", "")).strip()
         if not entity_name or not text or entity_name not in entity_positions:
@@ -1492,15 +1711,34 @@ def draw_speech_bubbles(
             if r:
                 scale = getattr(r, "speech_bubble_scale", 1.0)
 
-            # Check if this is a trade message
+        # Trade sessions are renderer-published messages with two participants.
         trade_data = parse_trade_message(text)
         if trade_data:
-            # Get entity lookup for accessing items
-            entity_lookup = {e.name: e for e in getattr(env, "state", None).entities if hasattr(env, "state")}
             trade_data["_entity_lookup"] = entity_lookup
-            entity = entity_by_name.get(entity_name)
-            if entity and entity_name in entity_positions:
-                draw_trade_bubble(renderer, entity_positions[entity_name], trade_data, scale)
+            trade_data["messages"] = list(bubble.get("messages", []))
+            left_name = trade_data.get("left", entity_name)
+            right_name = trade_data.get("right", bubble.get("partner_name", ""))
+            if left_name in entity_positions and right_name in entity_positions:
+                left_entity = entity_by_name.get(left_name)
+                right_entity = entity_by_name.get(right_name)
+                left_scale = scale
+                right_scale = scale
+                if left_entity:
+                    left_renderable = left_entity.get_component(Renderable)
+                    if left_renderable:
+                        left_scale = getattr(left_renderable, "speech_bubble_scale", 1.0)
+                if right_entity:
+                    right_renderable = right_entity.get_component(Renderable)
+                    if right_renderable:
+                        right_scale = getattr(right_renderable, "speech_bubble_scale", 1.0)
+                draw_trade_session_window(
+                    renderer,
+                    entity_positions[left_name],
+                    entity_positions[right_name],
+                    trade_data,
+                    entity_lookup,
+                    min(left_scale, right_scale),
+                )
                 continue
 
         px, py = entity_positions[entity_name]
@@ -1574,7 +1812,6 @@ def auto_tile_wall_entities(renderer: "Pygame_Renderer", renderables: list[tuple
             wall_entities.append((entity, renderable))
     if not wall_entities:
         return
-    from .assets import resolve_wall_sprite
     for entity, renderable in wall_entities:
         wx, wy = entity.position.x, entity.position.y
         neighbors = wall_neighbor_mask(wx, wy, wall_positions)

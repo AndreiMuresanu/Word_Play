@@ -82,7 +82,7 @@ class Pygame_Renderer(Renderer):
         draw_grid_overlay: bool = False,
         width: int = 10,
         height: int = 10,
-        default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
+        default_floor_sprite: str = "src/world_tiles/indoors/floors/white_grid_floor.png",
     ):
         """Configure renderer state, layout mapping, and sizing defaults."""
         from .runtime import configure_renderer

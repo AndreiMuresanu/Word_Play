@@ -1,23 +1,35 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import math
 import re
+import time
 from types import MethodType
 from typing import Any, TYPE_CHECKING
 
 from word_play.core import Position
+from word_play.presets.action_policies.human import Human_Takes_Action
+from word_play.presets.movement.single_point import Single_Point_Position
+from word_play.presets.systems.communication.core import Communication_Policy
+from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import (
+    Human_Communication_Policy,
+)
+from word_play.presets.systems.communication.trade_communication.core import Trade_Offer, Trading_Policy
+from word_play.presets.systems.communication.trade_communication.trade_actions import Public_Trade_Offer
+from word_play.presets.systems.containers import Container, Single_Item_Holder
+from word_play.presets.systems.crafter import Crafter
+from word_play.presets.systems.inventory import Inventory
+
+from .renderer import Renderable
+from .runtime import prompt_human_action, prompt_human_multi_select, prompt_human_text
+from .wall_geometry import infer_enclosed_floor_positions
 
 if TYPE_CHECKING:
     from word_play.core import Environment
-    from word_play.presets.systems import Inventory, Container
 
 
 def _is_in_any_inventory(item, env) -> bool:
     """Check if item is in any entity's inventory."""
-    try:
-        from word_play.presets.systems import Inventory
-    except Exception:
-        return False
     for entity in env.state.entities:
         inventory = entity.get_component(Inventory)
         if inventory and item in inventory.contents:
@@ -27,10 +39,6 @@ def _is_in_any_inventory(item, env) -> bool:
 
 def _is_in_closed_container(item, env) -> bool:
     """Check if item is in a hidden/closed container."""
-    try:
-        from word_play.presets.systems import Container
-    except Exception:
-        return False
     for entity in env.state.entities:
         container = entity.get_component(Container)
         if container and item in container.contents:
@@ -39,14 +47,404 @@ def _is_in_closed_container(item, env) -> bool:
     return False
 
 
-def _install_communication_render_hooks(env) -> None:
-    """Mirror chat messages into Renderable.last_message without changing core systems."""
-    try:
-        from word_play.presets.systems.communication import Communication_Policy
-        from .renderer import Renderable
-    except Exception:
+def _component_named(entity, class_name: str):
+    for component in getattr(entity, "components", {}).values():
+        if component.__class__.__name__ == class_name:
+            return component
+    return None
+
+
+def _inventory_items(entity) -> list:
+    inventory = entity.get_component(Inventory) if hasattr(entity, "get_component") else None
+    if inventory is None:
+        return []
+    return list(getattr(inventory, "contents", getattr(inventory, "inventory", [])))
+
+
+def _money_amount(entity) -> float:
+    for component in getattr(entity, "components", {}).values():
+        if hasattr(component, "amount"):
+            try:
+                return float(component.amount)
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _parse_human_action_arg(action_selection, name: str, text: str):
+    arg = action_selection.required_kwargs[name]
+    return arg.parse_and_validate(
+        text,
+        action_selection.actor,
+        action_selection.target_entity,
+        action_selection.env,
+    )
+
+
+def _prompt_public_trade_action_kwargs(active_renderer, action_selection, error_message: str | None = None) -> dict:
+    actor = action_selection.actor
+    env = action_selection.env
+    trade_items = _inventory_items(actor)
+    currency_available = _money_amount(actor)
+    base_instructions = [
+        str(action_selection),
+        "Build a public offer.",
+        f"Currency available: {currency_available:g}",
+        *( [f"Error: {error_message}"] if error_message else [] ),
+    ]
+
+    selected_text = prompt_human_multi_select(
+        active_renderer,
+        env,
+        entity_name=actor.name,
+        position_label=str(actor.position),
+        header="Public Trade Items",
+        instructions=[
+            *base_instructions,
+            "Select the items you want to give.",
+            "Use Up/Down to move.",
+            "Press Space to select or deselect the highlighted item.",
+            "Press Enter to go to the next step.",
+        ],
+        options=[(idx, item.name) for idx, item in enumerate(trade_items)],
+    )
+    offer_items = _parse_human_action_arg(action_selection, "offer items", selected_text)
+
+    currency_error = None
+    while True:
+        currency_text = prompt_human_text(
+            active_renderer,
+            env,
+            entity_name=actor.name,
+            position_label=str(actor.position),
+            header="Public Trade Currency",
+            instructions=[
+                *base_instructions,
+                "Type the currency amount you want to give, or leave blank for 0.",
+                *( [f"Error: {currency_error}"] if currency_error else [] ),
+            ],
+            initial_text="0",
+        )
+        try:
+            offer_currency = _parse_human_action_arg(action_selection, "offer currency", currency_text.strip() or "0")
+            break
+        except Exception as exc:
+            currency_error = str(exc)
+
+    request_text = prompt_human_text(
+        active_renderer,
+        env,
+        entity_name=actor.name,
+        position_label=str(actor.position),
+        header="Public Trade Request",
+        instructions=[
+            *base_instructions,
+            "Type what you want in return.",
+            "Example: Berry, Cheese, or 1 gold.",
+        ],
+    )
+    request = _parse_human_action_arg(action_selection, "request", request_text)
+    return {
+        "offer items": offer_items,
+        "offer currency": offer_currency,
+        "request": request,
+    }
+
+
+def _publish_render_speech_bubble(env, entity_name: str, message: str | None, ttl: int = 2) -> None:
+    if message is None or not hasattr(env, "__dict__"):
+        return
+    text = str(message).strip()
+    if not text:
         return
 
+    existing = [
+        bubble
+        for bubble in list(getattr(env, "speech_bubbles", []))
+        if not (
+            isinstance(bubble, dict)
+            and bubble.get("_kind") == "speech"
+            and bubble.get("entity_name") == entity_name
+        )
+    ]
+    existing.append({
+        "entity_name": entity_name,
+        "text": text,
+        "_kind": "speech",
+        "_step": getattr(env, "cur_step", 0),
+        "ttl": ttl,
+    })
+    env.speech_bubbles = existing
+
+
+def _publish_renderer_private_chat_window(env) -> None:
+    if not hasattr(env, "__dict__"):
+        return
+
+    participant_names = list(getattr(env, "_renderer_conversation_participants", []))
+    messages = [
+        message
+        for message in list(getattr(env, "_renderer_conversation_log", []))
+        if ": " in str(message)
+    ][-6:]
+    if len(participant_names) < 2 or not messages:
+        return
+
+    existing = [
+        bubble
+        for bubble in list(getattr(env, "speech_bubbles", []))
+        if not (isinstance(bubble, dict) and bubble.get("_kind") == "chat_session")
+    ]
+    existing.append(
+        {
+            "entity_name": participant_names[0],
+            "participant_names": participant_names,
+            "messages": messages,
+            "_kind": "chat_session",
+            "_step": getattr(env, "cur_step", 0),
+            "ttl": 1,
+        }
+    )
+    env.speech_bubbles = existing
+
+
+def _clear_renderer_private_chat_windows(env) -> None:
+    if not hasattr(env, "__dict__"):
+        return
+    env.speech_bubbles = [
+        bubble
+        for bubble in list(getattr(env, "speech_bubbles", []))
+        if not (isinstance(bubble, dict) and bubble.get("_kind") == "chat_session")
+    ]
+
+
+def _render_conversation_update_from_renderer(env) -> None:
+    renderer = getattr(env, "renderer_impl", None)
+    if renderer is None or getattr(renderer, "_rendering_conversation_update", False):
+        return
+
+    renderer._rendering_conversation_update = True
+    try:
+        renderer.render(env)
+        delay = float(getattr(env, "conversation_render_delay", 0.45))
+        if delay > 0:
+            time.sleep(delay)
+    finally:
+        renderer._rendering_conversation_update = False
+
+
+def _looks_like_trade_conversation(info: str | None) -> bool:
+    return bool(info and "trade negotiation" in str(info).lower())
+
+
+def _nearby_communication_partner_names(actor, env) -> set[str]:
+    movement_system = getattr(env, "movement_system", None)
+    positions_are_close = getattr(movement_system, "positions_are_close", None)
+    if not callable(positions_are_close):
+        return set()
+
+    return {
+        entity.name
+        for entity in getattr(getattr(env, "state", None), "entities", [])
+        if (
+            entity is not actor
+            and hasattr(entity, "has_component")
+            and entity.has_component(Communication_Policy)
+            and positions_are_close(actor.position, entity.position)
+        )
+    }
+
+
+def _infer_conversation_visibility(env, participants) -> str:
+    if len(participants) < 2:
+        return "public"
+
+    starter = participants[-1]
+    participant_names = {
+        participant.name
+        for participant in participants
+        if participant is not starter and hasattr(participant, "name")
+    }
+    nearby_names = _nearby_communication_partner_names(starter, env)
+    if nearby_names and nearby_names.issubset(participant_names):
+        return "public"
+    return "private"
+
+
+def _trade_items_field(offer: Trade_Offer | None) -> str:
+    if offer is None or not offer.items:
+        return "none"
+    return ",".join(item.name for item in offer.items)
+
+
+def _trade_currency_field(offer: Trade_Offer | None) -> str:
+    if offer is None or offer.currency <= 0:
+        return ""
+    return f"{offer.currency:g}"
+
+
+def _trade_session_text(left, right, offers: dict[tuple[str, str], Trade_Offer], accepted: bool) -> str:
+    left_offer = offers.get((left.name, right.name))
+    right_offer = offers.get((right.name, left.name))
+    accepted_text = "yes" if accepted else "no"
+    return (
+        "TRADE_SESSION:|"
+        f"left:{left.name}|right:{right.name}|"
+        f"left_offer:{_trade_items_field(left_offer)}|"
+        f"left_currency:{_trade_currency_field(left_offer)}|"
+        f"right_offer:{_trade_items_field(right_offer)}|"
+        f"right_currency:{_trade_currency_field(right_offer)}|"
+        f"accepted:{accepted_text}"
+    )
+
+
+def _trade_window_messages(env, participant_names: set[str], limit: int = 2) -> list[str]:
+    messages = []
+    for entry in list(getattr(env, "_renderer_conversation_log", [])):
+        text = str(entry).strip()
+        if ": " not in text:
+            continue
+        speaker_text = text.split(" - ", 1)[1] if text.startswith("Round ") and " - " in text else text
+        speaker_name = speaker_text.split(":", 1)[0].strip()
+        if speaker_name in participant_names:
+            messages.append(speaker_text)
+    return messages[-limit:]
+
+
+def _publish_renderer_trade_windows(env, accepted: bool = False) -> None:
+    if not hasattr(env, "__dict__"):
+        return
+
+    participant_names = list(getattr(env, "_renderer_conversation_participants", []))
+    if len(participant_names) < 2:
+        return
+
+    entity_by_name = {
+        entity.name: entity
+        for entity in getattr(getattr(env, "state", None), "entities", [])
+        if hasattr(entity, "name")
+    }
+    participants = [entity_by_name[name] for name in participant_names if name in entity_by_name]
+    if len(participants) < 2:
+        return
+
+    offers = dict(getattr(env, "_renderer_trade_offers", {}))
+    existing = [
+        bubble
+        for bubble in list(getattr(env, "speech_bubbles", []))
+        if not (isinstance(bubble, dict) and bubble.get("_kind") == "trade_session")
+    ]
+
+    for left_idx, left in enumerate(participants):
+        for right in participants[left_idx + 1 :]:
+            participant_pair = {left.name, right.name}
+            existing.append(
+                {
+                    "entity_name": left.name,
+                    "partner_name": right.name,
+                    "text": _trade_session_text(left, right, offers, accepted),
+                    "messages": _trade_window_messages(env, participant_pair),
+                    "_kind": "trade_session",
+                    "_step": getattr(env, "cur_step", 0),
+                    "ttl": 1,
+                }
+            )
+
+    env.speech_bubbles = existing
+
+
+def _clear_renderer_trade_windows(env) -> None:
+    if not hasattr(env, "__dict__"):
+        return
+    env.speech_bubbles = [
+        bubble
+        for bubble in list(getattr(env, "speech_bubbles", []))
+        if not (isinstance(bubble, dict) and bubble.get("_kind") == "trade_session")
+    ]
+
+
+def _render_trade_update_from_renderer(env) -> None:
+    renderer = getattr(env, "renderer_impl", None)
+    if renderer is None or getattr(renderer, "_rendering_trade_update", False):
+        return
+
+    renderer._rendering_trade_update = True
+    try:
+        renderer.render(env)
+        delay = float(getattr(env, "trade_render_delay", 0.45))
+        if delay > 0:
+            time.sleep(delay)
+    finally:
+        renderer._rendering_trade_update = False
+
+
+def _install_trade_render_hooks(env) -> None:
+    """Publish and redraw trade windows from renderer-side trade hooks."""
+    for entity in getattr(getattr(env, "state", None), "entities", []):
+        if not hasattr(entity, "get_component"):
+            continue
+        renderable = entity.get_component(Renderable)
+        public_offer = entity.get_component(Public_Trade_Offer)
+        if renderable is not None and public_offer is not None and not getattr(public_offer, "_renderer_public_offer_hook_installed", False):
+            original_post_offer = public_offer.post_offer
+            original_refund = public_offer.refund
+
+            def wrapped_post_offer(self, offer, env=None, *, _original=original_post_offer):
+                self._renderer_public_offer_posting = True
+                try:
+                    return _original(offer, env)
+                finally:
+                    self._renderer_public_offer_posting = False
+                    if env is not None:
+                        _render_trade_update_from_renderer(env)
+
+            def wrapped_refund(self, env=None, *, _original=original_refund):
+                result = _original(env)
+                if env is not None and not getattr(self, "_renderer_public_offer_posting", False):
+                    _render_trade_update_from_renderer(env)
+                return result
+
+            public_offer.post_offer = MethodType(wrapped_post_offer, public_offer)
+            public_offer.refund = MethodType(wrapped_refund, public_offer)
+            public_offer._renderer_public_offer_hook_installed = True
+
+        policy = entity.get_component(Trading_Policy)
+        if renderable is None or policy is None:
+            continue
+        if getattr(policy, "_renderer_trade_hook_installed", False):
+            continue
+
+        original_receive_trade_offer = policy.receive_trade_offer
+        original_end_trade = policy.end_trade
+
+        def wrapped_receive_trade_offer(self, offer, sender, env, *, _original=original_receive_trade_offer):
+            result = _original(offer, sender, env)
+            recipient = getattr(self, "entity", None)
+            if recipient is not None and hasattr(env, "__dict__"):
+                offers = dict(getattr(env, "_renderer_trade_offers", {}))
+                offers[(sender.name, recipient.name)] = offer
+                env._renderer_trade_offers = offers
+                env._renderer_trade_end_rendered = False
+                _publish_renderer_trade_windows(env)
+                _render_trade_update_from_renderer(env)
+            return result
+
+        def wrapped_end_trade(self, participants, env, info=None, *, _original=original_end_trade):
+            result = _original(participants, env, info)
+            if not getattr(env, "_renderer_trade_end_rendered", False):
+                _publish_renderer_trade_windows(env, accepted=True)
+                _render_trade_update_from_renderer(env)
+                _clear_renderer_trade_windows(env)
+                env._renderer_trade_end_rendered = True
+            return result
+
+        policy.receive_trade_offer = MethodType(wrapped_receive_trade_offer, policy)
+        policy.end_trade = MethodType(wrapped_end_trade, policy)
+        policy._renderer_trade_hook_installed = True
+
+
+def _install_communication_render_hooks(env) -> None:
+    """Publish chat messages into renderer-owned speech bubbles."""
     for entity in getattr(getattr(env, "state", None), "entities", []):
         if not hasattr(entity, "get_component"):
             continue
@@ -64,29 +462,47 @@ def _install_communication_render_hooks(env) -> None:
         def wrapped_start(self, participants, env, info=None, *, _original=original_start):
             depth = int(getattr(env, "_renderer_conversation_depth", 0))
             if depth == 0:
+                conversation_kind = "trade" if _looks_like_trade_conversation(info) else "chat"
+                conversation_visibility = _infer_conversation_visibility(env, participants)
                 env._renderer_conversation_log = []
                 env._renderer_conversation_participants = [participant.name for participant in participants]
                 starter_name = getattr(getattr(self, "entity", None), "name", "Unknown")
                 env._renderer_conversation_starter = starter_name
-                env._renderer_conversation_log.append(f"Conversation started by {starter_name}")
+                env._renderer_conversation_kind = conversation_kind
+                env._renderer_conversation_visibility = conversation_visibility
+                if conversation_kind == "trade":
+                    env._renderer_trade_offers = {}
+                    env._renderer_trade_end_rendered = False
+                    env._renderer_conversation_log.append(f"Trade started by {starter_name}")
+                elif conversation_visibility == "private":
+                    env._renderer_conversation_log.append(f"Private chat started by {starter_name}")
+                else:
+                    env._renderer_conversation_log.append(f"Conversation started by {starter_name}")
             env._renderer_conversation_depth = depth + 1
             return _original(participants, env, info)
 
-        def wrapped_send(self, recipients, env, info=None, *, _original=original_send, _renderable=renderable):
+        def wrapped_send(self, recipients, env, info=None, *, _original=original_send):
+            conversation_kind = getattr(env, "_renderer_conversation_kind", "chat")
+            speaker_name = getattr(getattr(self, "entity", None), "name", "Unknown")
+
             message = _original(recipients, env, info)
-            if message is not None:
-                _renderable.last_message = str(message)
-                _renderable._last_message_step = getattr(env, "cur_step", 0)
+            if message is not None and str(message).strip():
                 conversation_log = list(getattr(env, "_renderer_conversation_log", []))
-                speaker_name = getattr(getattr(self, "entity", None), "name", "Unknown")
                 participant_count = max(1, len(getattr(env, "_renderer_conversation_participants", [])))
                 prior_messages = max(
                     0,
                     len([entry for entry in conversation_log if entry.startswith("Round ") and ": " in entry])
                 )
                 round_number = prior_messages // participant_count + 1
-                conversation_log.append(f"Round {round_number} - {speaker_name}: {message}")
+                entry = f"Round {round_number} - {speaker_name}: {message}"
+                conversation_log.append(entry)
                 env._renderer_conversation_log = conversation_log[-8:]
+                if conversation_kind != "trade":
+                    if getattr(env, "_renderer_conversation_visibility", "public") == "private":
+                        _publish_renderer_private_chat_window(env)
+                    else:
+                        _publish_render_speech_bubble(env, speaker_name, str(message))
+                    _render_conversation_update_from_renderer(env)
             return message
 
         def wrapped_end(self, participants, env, info=None, *, _original=original_end):
@@ -96,9 +512,15 @@ def _install_communication_render_hooks(env) -> None:
                 depth = max(0, int(getattr(env, "_renderer_conversation_depth", 0)) - 1)
                 env._renderer_conversation_depth = depth
                 if depth == 0:
+                    if getattr(env, "_renderer_conversation_visibility", "public") == "private":
+                        _clear_renderer_private_chat_windows(env)
                     env._renderer_conversation_participants = []
                     env._renderer_conversation_log = []
                     env._renderer_conversation_starter = None
+                    env._renderer_conversation_kind = None
+                    env._renderer_conversation_visibility = None
+                    env._renderer_trade_offers = {}
+                    env._renderer_trade_end_rendered = False
 
         policy.start_conversation = MethodType(wrapped_start, policy)
         policy.send_message = MethodType(wrapped_send, policy)
@@ -107,12 +529,7 @@ def _install_communication_render_hooks(env) -> None:
 
 
 def _expire_render_messages(env) -> None:
-    """Clear transient speech bubbles after they have been visible for one step."""
-    try:
-        from .renderer import Renderable
-    except Exception:
-        return
-
+    """Clear legacy Renderable.last_message values after they have been visible briefly."""
     current_step = getattr(env, "cur_step", 0)
     for entity in getattr(getattr(env, "state", None), "entities", []):
         if not hasattr(entity, "get_component"):
@@ -132,21 +549,6 @@ def _install_human_prompt_hooks(env) -> None:
     """Patch human action/chat components at runtime when a renderer is active."""
     renderer = getattr(env, "renderer_impl", None)
     if renderer is None:
-        return
-
-    try:
-        from word_play.presets.action_policies.human import Human_Takes_Action
-    except Exception:
-        Human_Takes_Action = None
-    try:
-        from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import (
-            Human_Communication_Policy,
-        )
-    except Exception:
-        Human_Communication_Policy = None
-    try:
-        from .runtime import prompt_human_action, prompt_human_multi_select, prompt_human_text
-    except Exception:
         return
 
     for entity in getattr(getattr(env, "state", None), "entities", []):
@@ -171,6 +573,17 @@ def _install_human_prompt_hooks(env) -> None:
                         return _original(action_selection)
                     error_message = None
                     while True:
+                        if action_selection.action.__class__.__name__ == "Start_Public_Trade":
+                            try:
+                                return _prompt_public_trade_action_kwargs(
+                                    active_renderer,
+                                    action_selection,
+                                    error_message=error_message,
+                                )
+                            except Exception as exc:
+                                error_message = str(exc)
+                                continue
+
                         if (
                             action_selection.required_kwargs
                             and len(action_selection.required_kwargs) == 1
@@ -192,7 +605,9 @@ def _install_human_prompt_hooks(env) -> None:
                                     instructions=[
                                         str(action_selection),
                                         f"Choose values for: {arg_name}",
-                                        "Use Up/Down to move, Space to toggle, Enter to submit.",
+                                        "Use Up/Down to move.",
+                                        "Press Space to select or deselect the highlighted item.",
+                                        "Press Enter to go to the next step.",
                                         *( [f"Error: {error_message}"] if error_message else [] ),
                                     ],
                                     options=[(int(idx), label) for idx, label in matches],
@@ -206,7 +621,7 @@ def _install_human_prompt_hooks(env) -> None:
                         instructions = [
                             str(action_selection),
                             "Type the required values separated by ';'.",
-                            "Press Enter to submit.",
+                            "Press Enter to go to the next step.",
                         ]
                         if action_selection.required_kwargs:
                             for name, arg in action_selection.required_kwargs.items():
@@ -242,6 +657,10 @@ def _install_human_prompt_hooks(env) -> None:
                     active_renderer = getattr(env, "renderer_impl", None)
                     if active_renderer is None or self.entity is None:
                         return _original(recipients, env, info)
+                    is_trade = (
+                        getattr(env, "_renderer_conversation_kind", "chat") == "trade"
+                        or _looks_like_trade_conversation(info)
+                    )
                     recipient_names = ", ".join(recipient.name for recipient in recipients) or "nobody"
                     transcript = list(getattr(env, "_renderer_conversation_log", []))
                     instructions = [
@@ -249,11 +668,11 @@ def _install_human_prompt_hooks(env) -> None:
                         *([str(info)] if info else []),
                     ]
                     if transcript:
-                        instructions.append("Conversation so far:")
+                        instructions.append("Negotiation so far:" if is_trade else "Conversation so far:")
                         instructions.extend(transcript[-6:])
                     instructions.extend([
-                        f"Now speaking: {self.entity.name}",
-                        "Type your message.",
+                        f"Now {'negotiating' if is_trade else 'speaking'}: {self.entity.name}",
+                        f"Type your {'negotiation' if is_trade else 'chat'} message.",
                         "Press Enter to send.",
                     ])
                     return prompt_human_text(
@@ -261,12 +680,80 @@ def _install_human_prompt_hooks(env) -> None:
                         env,
                         entity_name=self.entity.name,
                         position_label=str(self.entity.position),
-                        header="Chat",
+                        header="Trade Negotiation" if is_trade else "Chat",
                         instructions=instructions,
                     )
 
                 comm_policy.send_message = MethodType(wrapped_send, comm_policy)
                 comm_policy._renderer_prompt_hook_installed = True
+
+        trade_policy = _component_named(entity, "Human_Trading_Policy")
+        if trade_policy is not None:
+            if not getattr(trade_policy, "_renderer_trade_offer_prompt_hook_installed", False):
+                original_send = trade_policy.send_trade_offer
+
+                def wrapped_trade_offer(self, recipients, env, info=None, *, _original=original_send):
+                    active_renderer = getattr(env, "renderer_impl", None)
+                    if active_renderer is None or self.entity is None:
+                        return _original(recipients, env, info)
+
+                    def prompt_offer(recipient=None):
+                        trade_items = _inventory_items(self.entity)
+                        recipient_text = f" for {recipient.name}" if recipient is not None else ""
+                        currency_available = _money_amount(self.entity)
+                        base_instructions = [
+                            f"Build trade offer{recipient_text}.",
+                            *([str(info)] if info else []),
+                            f"Currency available: {currency_available:g}",
+                        ]
+                        selected_text = prompt_human_multi_select(
+                            active_renderer,
+                            env,
+                            entity_name=self.entity.name,
+                            position_label=str(self.entity.position),
+                            header="Trade Items",
+                            instructions=[
+                                *base_instructions,
+                                "Use Up/Down to move.",
+                                "Press Space to select or deselect the highlighted item.",
+                                "Press Enter to go to the next step.",
+                            ],
+                            options=[(idx, item.name) for idx, item in enumerate(trade_items)],
+                        )
+                        item_indices = self._parse_item_indices(selected_text, len(trade_items))
+
+                        error_message = None
+                        for _ in range(self.MAX_ATTEMPTS):
+                            currency_text = prompt_human_text(
+                                active_renderer,
+                                env,
+                                entity_name=self.entity.name,
+                                position_label=str(self.entity.position),
+                                header="Trade Currency",
+                                instructions=[
+                                    *base_instructions,
+                                    "Type a currency amount, or leave blank for 0.",
+                                    *( [f"Error: {error_message}"] if error_message else [] ),
+                                ],
+                                initial_text="0",
+                            )
+                            try:
+                                currency = self._parse_currency(currency_text, currency_available)
+                                return {
+                                    "items": [trade_items[idx] for idx in item_indices],
+                                    "currency": currency,
+                                }
+                            except ValueError as exc:
+                                error_message = str(exc)
+
+                        raise RuntimeError("Too many invalid trade-offer attempts.")
+
+                    if len(recipients) <= 1:
+                        return prompt_offer(recipients[0] if recipients else None)
+                    return {recipient.name: prompt_offer(recipient) for recipient in recipients}
+
+                trade_policy.send_trade_offer = MethodType(wrapped_trade_offer, trade_policy)
+                trade_policy._renderer_trade_offer_prompt_hook_installed = True
 
 
 class Position_Layout_Adapter(ABC):
@@ -313,8 +800,6 @@ def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:
     - 5-8: evenly distributed ring
     - 9+: concentric rings
     """
-    import math
-
     if n == 1:
         return [(0.0, 0.0)]
     elif n == 2:
@@ -380,7 +865,7 @@ class SinglePointLayout(Position_Layout_Adapter):
     # Room background settings
     WALL_SET = "src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall"
     TABLE_SPRITE = "src/world_tiles/indoors/stations/prep_table.png"
-    DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
+    DEFAULT_FLOOR = "src/world_tiles/indoors/floors/white_grid_floor.png"
 
     def __init__(
         self,
@@ -428,9 +913,6 @@ class SinglePointLayout(Position_Layout_Adapter):
 
     def prepare_env(self, env: "Environment") -> None:
         """Calculate visual positions for entities at this point."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-        import math
-
         if env is None:
             return
 
@@ -549,8 +1031,6 @@ class SinglePointLayout(Position_Layout_Adapter):
 
     def screen_position(self, position: Position | Any) -> tuple[float, float]:
         """Convert position to screen coordinates."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-
         if isinstance(position, Single_Point_Position):
             offset_x = getattr(position, "visual_offset_x", 0.0)
             offset_y = getattr(position, "visual_offset_y", 0.0)
@@ -570,201 +1050,7 @@ class SinglePointLayout(Position_Layout_Adapter):
 Circle_Layout_Adapter = SinglePointLayout
 
 
-class Graph_Layout_Adapter(Position_Layout_Adapter):
-    """Layout adapter for graph-based environments.
-
-    Renders nodes at their (x,y) coordinates with visible connections.
-    Supports different room types: start, hub, treasure, goal.
-    """
-
-    NODE_SIZE = 0.4
-    EDGE_COLOR = (60, 70, 80)
-
-    # Colors for different room types
-    ROOM_COLORS = {
-        "start": (100, 180, 100),    # Green - start room
-        "hub": (140, 140, 180),      # Blue-gray - hub
-        "treasure": (200, 180, 80),  # Gold - treasure room
-        "goal": (180, 100, 180),     # Purple - goal room
-        "default": (120, 140, 160), # Default blue-gray
-    }
-
-    def __init__(self):
-        self._graph_nodes: dict[str, Any] = {}
-        self._edge_tiles: list[dict[str, Any]] = []
-        self._node_tiles: list[dict[str, Any]] = []
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Extract graph nodes and edges from environment."""
-        self._graph_nodes = getattr(env, "graph_nodes", {})
-        self._build_graph_background()
-
-    def _build_graph_background(self) -> None:
-        """Build background tiles for graph edges and nodes."""
-        self._edge_tiles = []
-        self._node_tiles = []
-
-        # Build edges from node connections
-        drawn_edges: set[tuple[str, str]] = set()
-        for node_id, node in self._graph_nodes.items():
-            # Draw connections as edges
-            for connected_id in getattr(node, "connections", set()):
-                # Avoid drawing edges twice
-                edge_key = tuple(sorted([node_id, connected_id]))
-                if edge_key in drawn_edges:
-                    continue
-                drawn_edges.add(edge_key)
-
-                other = self._graph_nodes.get(connected_id)
-                if other:
-                    self._edge_tiles.extend(self._create_edge_tiles(node, other))
-
-            # Draw node itself with color based on room type
-            room_type = getattr(node, "room_type", "default")
-            node_color = self.ROOM_COLORS.get(room_type, self.ROOM_COLORS["default"])
-
-            self._node_tiles.append({
-                "x": node.x,
-                "y": node.y,
-                "kind": "floor",
-                "sprite": "src/world_tiles/misc/floor_directions.png",
-                "color": node_color,
-                "is_node": True,
-                "node_id": node_id,
-                "room_type": room_type,
-            })
-
-    def _create_edge_tiles(self, node_a: Any, node_b: Any) -> list[dict[str, Any]]:
-        """Create tiles to draw a line between two nodes."""
-        tiles = []
-        x1, y1 = node_a.x, node_a.y
-        x2, y2 = node_b.x, node_b.y
-
-        # Draw intermediate tiles along the edge
-        dx = x2 - x1
-        dy = y2 - y1
-        dist = (dx * dx + dy * dy) ** 0.5
-
-        if dist > 0:
-            steps = int(dist * 2)  # 2 tiles per unit distance
-            for i in range(steps + 1):
-                t = i / max(steps, 1)
-                x = x1 + dx * t
-                y = y1 + dy * t
-                tiles.append({
-                    "x": x,
-                    "y": y,
-                    "kind": "floor",
-                    "sprite": "src/world_tiles/misc/floor_directions.png",
-                    "color": self.EDGE_COLOR,
-                    "is_edge": True,
-                })
-        return tiles
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Return graph edges and nodes as background tiles."""
-        # Rebuild if nodes changed
-        current_nodes = getattr(env, "graph_nodes", {})
-        if current_nodes != self._graph_nodes:
-            self._graph_nodes = current_nodes
-            self._build_graph_background()
-        return self._edge_tiles + self._node_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert graph position to screen coordinates."""
-        from word_play.presets.movement.graph import Graph_Position
-
-        if isinstance(position, Graph_Position):
-            node = self._graph_nodes.get(position.node_id)
-            if node:
-                return (float(node.x), float(node.y))
-            return (0.0, 0.0)
-
-class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
-    """Adapter for continuous 2D positions (float coordinates) with camera support.
-
-    Also handles background tiles from environment with camera viewport clamping.
-    """
-
-    def __init__(self, viewport_width: int = 15, viewport_height: int = 15):
-        super().__init__()
-        self.camera_offset_x: float = 0
-        self.camera_offset_y: float = 0
-        self.viewport_width = viewport_width
-        self.viewport_height = viewport_height
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Update camera position based on player position."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
-        # Find the player/agent entity
-        player = getattr(env, "player", None)
-        if player is None and hasattr(env, "agents") and env.agents:
-            player = env.agents[0]
-
-        if player is not None and hasattr(player, "position"):
-            pos = player.position
-            if isinstance(pos, Continuous_Position_2D):
-                # Center camera on player: player_x - half_viewport
-                half_view = self.viewport_width / 2
-                target_camera = pos.x - half_view
-
-                # Clamp to world bounds
-                bounds_min_x = getattr(env, "bounds_min_x", 0)
-                bounds_max_x = getattr(env, "bounds_max_x", target_camera + self.viewport_width)
-                max_cam = max(bounds_min_x, bounds_max_x - self.viewport_width)
-
-                self.camera_offset_x = max(bounds_min_x, min(target_camera, max_cam))
-            else:
-                self.camera_offset_x = getattr(env, "camera_x", 0)
-        else:
-            self.camera_offset_x = getattr(env, "camera_x", 0)
-
-        self.camera_offset_y = getattr(env, "camera_offset_y", 0)
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Fetch background tiles from renderer and filter to visible viewport."""
-        renderer = getattr(env, "renderer_impl", None)
-        if renderer is None or not hasattr(renderer, "background_tiles"):
-            return []
-        all_tiles = renderer.background_tiles()
-
-        # Filter to visible viewport (camera area + margin)
-        margin = 2  # Extra tiles on each side for smooth scrolling
-        visible_tiles = []
-
-        for tile in all_tiles:
-            tx = float(tile.get("x", 0))
-            ty = float(tile.get("y", 0))
-
-            # Check if tile is within camera viewport (y check too)
-            if (self.camera_offset_x - margin <= tx <=
-                self.camera_offset_x + self.viewport_width + margin and
-                self.camera_offset_y - margin <= ty <=
-                self.camera_offset_y + self.viewport_height + margin):
-                # Apply camera transform to tile position (world -> screen)
-                visible_tiles.append({
-                    **tile,
-                    "x": tx - self.camera_offset_x,
-                    "y": ty - self.camera_offset_y,
-                })
-
-        return visible_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert continuous position to screen coordinates with camera offset."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
-        if isinstance(position, Continuous_Position_2D):
-            return (
-                float(position.x) - self.camera_offset_x,
-                float(position.y) - self.camera_offset_y,
-            )
-
-        return super().screen_position(position)
-
-
-_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
+_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/white_grid_floor.png"
 
 
 class Environment_Layout_Adapter(Grid_Layout_Adapter):
@@ -790,8 +1076,6 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
             and hasattr(entity.position, "y")
         }
         if wall_positions:
-            from .wall_geometry import infer_enclosed_floor_positions
-
             occupied_positions = {
                 (int(entity.position.x), int(entity.position.y))
                 for entity in getattr(getattr(env, "state", None), "entities", [])
@@ -814,12 +1098,8 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
         """Apply common renderer-side sync for inventories, holders, crafters, and containers."""
         _install_human_prompt_hooks(env)
         _install_communication_render_hooks(env)
+        _install_trade_render_hooks(env)
         _expire_render_messages(env)
-        try:
-            from word_play.presets.systems import Inventory, Crafter, Single_Item_Holder, Container
-            from .renderer import Renderable
-        except Exception:
-            return
 
         for entity in getattr(getattr(env, "state", None), "entities", []):
             renderable = entity.get_component(Renderable) if hasattr(entity, "get_component") else None

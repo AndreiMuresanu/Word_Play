@@ -9,6 +9,7 @@ from word_play.presets.movement.simple_2d_grid import (
     Move_Right,
     Move_Up,
     Position_2D,
+    positions_are_close_if_same_or_adjacent,
 )
 from word_play.presets.movement.single_point import Single_Point_Position
 
@@ -22,4 +23,5 @@ __all__ = [
     "Position_2D",
     "Single_Point_Position",
     "positions_are_close_if_equal",
+    "positions_are_close_if_same_or_adjacent",
 ]
