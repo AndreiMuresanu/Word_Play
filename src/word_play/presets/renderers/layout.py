@@ -1,52 +1,85 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import math
 import re
 from types import MethodType
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
-from word_play.core import Position
+from word_play.core import Environment, Position
+from word_play.presets.action_policies.human import Human_Takes_Action
+from word_play.presets.movement.single_point import Single_Point_Position
+from word_play.presets.systems import Inventory
+from word_play.presets.systems.communication import Communication_Policy
+from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import (
+    Human_Communication_Policy,
+)
 
-if TYPE_CHECKING:
-    from word_play.core import Environment
-    from word_play.presets.systems import Inventory, Container
+from .renderer import Renderable
+from .runtime import prompt_human_action, prompt_human_multi_select, prompt_human_text
+from .wall_geometry import infer_enclosed_floor_positions
+
+try:
+    from word_play.presets.movement.continuous_2d import Continuous_Position_2D
+except ImportError:
+    Continuous_Position_2D = None
+
+try:
+    from word_play.presets.movement.graph import Graph_Position
+except ImportError:
+    Graph_Position = None
+
+try:
+    from word_play.presets.systems import Container
+except ImportError:
+    Container = None
+
+try:
+    from word_play.presets.systems import Crafter
+except ImportError:
+    Crafter = None
+
+try:
+    from word_play.presets.systems import Single_Item_Holder
+except ImportError:
+    Single_Item_Holder = None
+
+def _inventory_items(inventory: Any) -> list[Any]:
+    """Return items from either the legacy inventory list or newer contents list."""
+    items = getattr(inventory, "contents", None)
+    if items is None:
+        items = getattr(inventory, "inventory", [])
+    return list(items or [])
 
 
 def _is_in_any_inventory(item, env) -> bool:
     """Check if item is in any entity's inventory."""
-    try:
-        from word_play.presets.systems import Inventory
-    except Exception:
-        return False
     for entity in env.state.entities:
         inventory = entity.get_component(Inventory)
-        if inventory and item in inventory.contents:
+        if inventory and item in _inventory_items(inventory):
             return True
     return False
 
 
 def _is_in_closed_container(item, env) -> bool:
     """Check if item is in a hidden/closed container."""
-    try:
-        from word_play.presets.systems import Container
-    except Exception:
+    if Container is None:
         return False
     for entity in env.state.entities:
         container = entity.get_component(Container)
-        if container and item in container.contents:
+        if container and item in _inventory_items(container):
             if container.visibility == "hidden" and not container.is_open:
                 return True
     return False
 
 
-def _install_communication_render_hooks(env) -> None:
-    """Mirror chat messages into Renderable.last_message without changing core systems."""
-    try:
-        from word_play.presets.systems.communication import Communication_Policy
-        from .renderer import Renderable
-    except Exception:
-        return
+def _install_renderer_conversation_transcript_hooks(env) -> None:
+    """Attach renderer-only chat bookkeeping to communication policies.
 
+    Communication policies still own the actual conversation behavior. These
+    wrappers only copy outgoing messages into ``Renderable.last_message`` for
+    speech bubbles and keep a short transcript for human chat prompts.
+    """
     for entity in getattr(getattr(env, "state", None), "entities", []):
         if not hasattr(entity, "get_component"):
             continue
@@ -108,11 +141,6 @@ def _install_communication_render_hooks(env) -> None:
 
 def _expire_render_messages(env) -> None:
     """Clear transient speech bubbles after they have been visible for one step."""
-    try:
-        from .renderer import Renderable
-    except Exception:
-        return
-
     current_step = getattr(env, "cur_step", 0)
     for entity in getattr(getattr(env, "state", None), "entities", []):
         if not hasattr(entity, "get_component"):
@@ -128,25 +156,15 @@ def _expire_render_messages(env) -> None:
             renderable._last_message_step = None
 
 
-def _install_human_prompt_hooks(env) -> None:
-    """Patch human action/chat components at runtime when a renderer is active."""
+def _install_renderer_human_input_hooks(env) -> None:
+    """Route human action and chat prompts through the renderer HUD.
+
+    The existing human policies prompt through stdin. When an environment is
+    actively rendered, these wrappers swap only the prompt surface so keyboard
+    input can stay inside the pygame window.
+    """
     renderer = getattr(env, "renderer_impl", None)
     if renderer is None:
-        return
-
-    try:
-        from word_play.presets.action_policies.human import Human_Takes_Action
-    except Exception:
-        Human_Takes_Action = None
-    try:
-        from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import (
-            Human_Communication_Policy,
-        )
-    except Exception:
-        Human_Communication_Policy = None
-    try:
-        from .runtime import prompt_human_action, prompt_human_multi_select, prompt_human_text
-    except Exception:
         return
 
     for entity in getattr(getattr(env, "state", None), "entities", []):
@@ -193,7 +211,7 @@ def _install_human_prompt_hooks(env) -> None:
                                         str(action_selection),
                                         f"Choose values for: {arg_name}",
                                         "Use Up/Down to move, Space to toggle, Enter to submit.",
-                                        *( [f"Error: {error_message}"] if error_message else [] ),
+                                        *([f"Error: {error_message}"] if error_message else []),
                                     ],
                                     options=[(int(idx), label) for idx, label in matches],
                                 )
@@ -313,8 +331,6 @@ def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:
     - 5-8: evenly distributed ring
     - 9+: concentric rings
     """
-    import math
-
     if n == 1:
         return [(0.0, 0.0)]
     elif n == 2:
@@ -428,9 +444,6 @@ class SinglePointLayout(Position_Layout_Adapter):
 
     def prepare_env(self, env: "Environment") -> None:
         """Calculate visual positions for entities at this point."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-        import math
-
         if env is None:
             return
 
@@ -549,8 +562,6 @@ class SinglePointLayout(Position_Layout_Adapter):
 
     def screen_position(self, position: Position | Any) -> tuple[float, float]:
         """Convert position to screen coordinates."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-
         if isinstance(position, Single_Point_Position):
             offset_x = getattr(position, "visual_offset_x", 0.0)
             offset_y = getattr(position, "visual_offset_y", 0.0)
@@ -672,13 +683,12 @@ class Graph_Layout_Adapter(Position_Layout_Adapter):
 
     def screen_position(self, position: Position) -> tuple[float, float]:
         """Convert graph position to screen coordinates."""
-        from word_play.presets.movement.graph import Graph_Position
-
-        if isinstance(position, Graph_Position):
+        if Graph_Position is not None and isinstance(position, Graph_Position):
             node = self._graph_nodes.get(position.node_id)
             if node:
                 return (float(node.x), float(node.y))
             return (0.0, 0.0)
+        return super().screen_position(position)
 
 class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
     """Adapter for continuous 2D positions (float coordinates) with camera support.
@@ -695,8 +705,6 @@ class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
 
     def prepare_env(self, env: "Environment") -> None:
         """Update camera position based on player position."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
         # Find the player/agent entity
         player = getattr(env, "player", None)
         if player is None and hasattr(env, "agents") and env.agents:
@@ -704,7 +712,7 @@ class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
 
         if player is not None and hasattr(player, "position"):
             pos = player.position
-            if isinstance(pos, Continuous_Position_2D):
+            if Continuous_Position_2D is not None and isinstance(pos, Continuous_Position_2D):
                 # Center camera on player: player_x - half_viewport
                 half_view = self.viewport_width / 2
                 target_camera = pos.x - half_view
@@ -753,9 +761,7 @@ class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
 
     def screen_position(self, position: Position) -> tuple[float, float]:
         """Convert continuous position to screen coordinates with camera offset."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
-        if isinstance(position, Continuous_Position_2D):
+        if Continuous_Position_2D is not None and isinstance(position, Continuous_Position_2D):
             return (
                 float(position.x) - self.camera_offset_x,
                 float(position.y) - self.camera_offset_y,
@@ -790,8 +796,6 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
             and hasattr(entity.position, "y")
         }
         if wall_positions:
-            from .wall_geometry import infer_enclosed_floor_positions
-
             occupied_positions = {
                 (int(entity.position.x), int(entity.position.y))
                 for entity in getattr(getattr(env, "state", None), "entities", [])
@@ -812,14 +816,9 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
 
     def prepare_env(self, env: "Environment") -> None:
         """Apply common renderer-side sync for inventories, holders, crafters, and containers."""
-        _install_human_prompt_hooks(env)
-        _install_communication_render_hooks(env)
+        _install_renderer_human_input_hooks(env)
+        _install_renderer_conversation_transcript_hooks(env)
         _expire_render_messages(env)
-        try:
-            from word_play.presets.systems import Inventory, Crafter, Single_Item_Holder, Container
-            from .renderer import Renderable
-        except Exception:
-            return
 
         for entity in getattr(getattr(env, "state", None), "entities", []):
             renderable = entity.get_component(Renderable) if hasattr(entity, "get_component") else None
@@ -827,12 +826,13 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
                 continue
 
             inventory = entity.get_component(Inventory)
-            holder = entity.get_component(Single_Item_Holder)
-            crafter = entity.get_component(Crafter)
-            container = entity.get_component(Container)
+            holder = entity.get_component(Single_Item_Holder) if Single_Item_Holder is not None else None
+            crafter = entity.get_component(Crafter) if Crafter is not None else None
+            container = entity.get_component(Container) if Container is not None else None
 
             if inventory is not None:
-                held_item = inventory.contents[0] if inventory.contents else None
+                inventory_items = _inventory_items(inventory)
+                held_item = inventory_items[0] if inventory_items else None
                 held_renderable = None if held_item is None else held_item.get_component(Renderable)
                 renderable.overlay_sprite = None if held_renderable is None else held_renderable.sprite_path
                 renderable.overlay_mode = "badge"

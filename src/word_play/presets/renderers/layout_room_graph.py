@@ -5,6 +5,11 @@ from typing import Any, TYPE_CHECKING
 
 from .layout import Position_Layout_Adapter
 
+try:
+    from word_play.presets.movement.room_graph import Room_Position
+except ImportError:
+    Room_Position = None
+
 if TYPE_CHECKING:
     from word_play.core import Position, Environment
 
@@ -45,8 +50,8 @@ class Room_Graph_Layout_Adapter(Position_Layout_Adapter):
 
     def _update_current_room(self, env: "Environment") -> None:
         """Determine which room agent is currently in."""
-        from word_play.presets.movement.room_graph import Room_Position
-
+        if Room_Position is None:
+            return
         agent = getattr(env, "agent", None)
         if agent and hasattr(agent, "position"):
             pos = agent.position
@@ -271,9 +276,7 @@ class Room_Graph_Layout_Adapter(Position_Layout_Adapter):
 
     def screen_position(self, position: Position) -> tuple[float, float] | None:
         """Convert room position to screen coordinates."""
-        from word_play.presets.movement.room_graph import Room_Position
-
-        if isinstance(position, Room_Position):
+        if Room_Position is not None and isinstance(position, Room_Position):
             room = self._rooms.get(position.room_id)
             if room:
                 if self._one_room_mode:

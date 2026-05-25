@@ -9,25 +9,31 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 import pygame
 
-from word_play.core import Entity
-from word_play.core.components import Component
+from word_play.core import Action_Selection, Entity, Environment
+from word_play.core.components import Agent_Policy, Component, Non_Agent_Policy
+from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
+from word_play.presets.models import LLM_MODEL_REGISTRY, OpenRouter_Model
 from word_play.presets.movement.simple_2d_grid import Position_2D
 
 from .draw import render_environment
-from .interactive_env import load_recording_payload
-from .renderer import LLMConfig, Renderable
+from .interactive_env import (
+    ExperimentRecorder,
+    capture_environment_frame,
+    default_experiment_log_path,
+    load_recording_payload,
+)
+from .layout import Environment_Layout_Adapter
+from .renderer import LLMConfig, Pygame_Renderer, Renderable
 from .runtime import init_pygame_if_needed
 
-if TYPE_CHECKING:
-    from word_play.core import Action_Selection, Environment
-    from word_play.core.components import Agent_Policy
-
-    from .renderer import Pygame_Renderer
-
+try:
+    from word_play.presets.action_policies.random_policy import Random_Policy
+except ImportError:
+    Random_Policy = None
 
 @dataclass
 class RunSessionConfig:
@@ -107,10 +113,6 @@ def run_session(config: RunSessionConfig) -> str | None:
 
     This is the core implementation used by run_exp, Run_Render, and phase-based runs.
     """
-    from word_play.core.components import Agent_Policy
-    from word_play.presets.renderers.layout import Environment_Layout_Adapter
-    from word_play.presets.renderers.renderer import Pygame_Renderer
-
     if config.env is None and config.build_env is None:
         raise ValueError("run_session requires either env or build_env.")
 
@@ -166,7 +168,6 @@ def run_session(config: RunSessionConfig) -> str | None:
 
     # Setup LLM policies if needed
     if config.policy_mode == "llm":
-        from word_play.presets.models import OpenRouter_Model, LLM_MODEL_REGISTRY
         llm_model = OpenRouter_Model(
             model_name=config.model_name,
             generation_params={"temperature": 0.2},
@@ -206,8 +207,8 @@ def run_session(config: RunSessionConfig) -> str | None:
     # In non-LLM modes, replace any Agent_Policy (e.g. LLM policies defined in the env)
     # with the appropriate Non_Agent_Policy based on the chosen policy mode.
     if config.policy_mode != "llm":
-        from word_play.presets.action_policies.random_policy import Random_Policy
-        from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
+        if config.policy_mode == "random" and Random_Policy is None:
+            raise ImportError("Random_Policy is unavailable on this branch.")
         fallback_policy = Random_Policy if config.policy_mode == "random" else Follow_Action_Sequence
         for agent in env.agents:
             if agent.get_component(Agent_Policy) is not None:
@@ -261,10 +262,6 @@ def run_session(config: RunSessionConfig) -> str | None:
 
 def _build_phase_step_builder(discuss_steps: int, act_steps: int, discussion_generator: Callable):
     """Build a step builder that alternates between discuss and act phases."""
-    from word_play.core.components import Non_Agent_Policy, Agent_Policy
-    from word_play.core import Action_Selection
-    from word_play.presets.renderers.renderer import Renderable
-
     def step_builder(env, current_step, get_selected_action_fn, pending_action):
         cycle_length = discuss_steps + act_steps
         phase_pos = current_step % cycle_length
@@ -737,8 +734,6 @@ def capture_frame(
     frame_type: str = "state",
 ) -> dict[str, Any]:
     """Capture the current environment as a serializable replay frame."""
-    from .interactive_env import capture_environment_frame
-
     return capture_environment_frame(
         env,
         selected_actions=selected_actions,
@@ -804,8 +799,6 @@ def make_recorder(
     """Create an experiment recorder unless logging has been disabled."""
     if not keep_logs:
         return None
-
-    from .interactive_env import ExperimentRecorder, default_experiment_log_path
 
     resolved_path = Path(log_path) if log_path is not None else default_experiment_log_path(title, root_dir=log_root)
     return ExperimentRecorder(resolved_path, title=title, metadata=metadata)
@@ -1112,8 +1105,6 @@ def build_policy_step_actions(
     on_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None,
 ) -> list["Action_Selection"]:
     """Build one action per agent by querying each attached Agent_Policy or Non_Agent_Policy."""
-    from word_play.core.components import Agent_Policy, Non_Agent_Policy
-
     selections: list[Action_Selection] = []
     for agent_id, agent in enumerate(env.agents):
         # Check for Agent_Policy first (LLM policies), then fall back to Non_Agent_Policy (preview/sequence policies)
@@ -1182,10 +1173,6 @@ def _run_render_session(
     initial_notes: list[str] | None = None,
 ) -> str | None:
     """Build an env, optionally attach LLM policies, and run the shared live renderer."""
-    from word_play.core.components import Agent_Policy
-    from word_play.presets.renderers.layout import Environment_Layout_Adapter
-    from word_play.presets.renderers.renderer import Pygame_Renderer
-
     if policy_mode == "llm":
         if model_name is None or model_key is None or base_url is None:
             raise ValueError("LLM mode requires model_name, model_key, and base_url.")
@@ -1227,7 +1214,6 @@ def _run_render_session(
         ]
 
     if policy_mode == "llm":
-        from word_play.presets.models import OpenRouter_Model, LLM_MODEL_REGISTRY
         llm_model = OpenRouter_Model(
             model_name=model_name,
             generation_params={"temperature": 0.2},
@@ -1265,8 +1251,8 @@ def _run_render_session(
     # In non-LLM modes, replace any Agent_Policy (e.g. LLM policies from env definition)
     # with Non_Agent_Policy so the step builder doesn't try to call an LLM API.
     if policy_mode != "llm":
-        from word_play.presets.action_policies.random_policy import Random_Policy
-        from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
+        if policy_mode == "random" and Random_Policy is None:
+            raise ImportError("Random_Policy is unavailable on this branch.")
         fallback_policy = Random_Policy if policy_mode == "random" else Follow_Action_Sequence
         for agent in env.agents:
             if agent.get_component(Agent_Policy) is not None:
@@ -1409,12 +1395,6 @@ def _run_render_session_with_phases(
     DISCUSS phase: Agents "chat" via last_message on Renderable (no actions)
     ACT phase: Agents select and execute actions normally
     """
-    from word_play.core.components import Agent_Policy, Non_Agent_Policy
-    from word_play.core import Action_Selection
-    from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
-
-    from .renderer import Pygame_Renderer
-
     renderer = Pygame_Renderer(layout=layout, tile_size=tile_size)
     env.renderer_impl = renderer
 
@@ -1450,7 +1430,6 @@ def _run_render_session_with_phases(
             # DISCUSS phase: generate messages, no actions
             if discussion_generator:
                 for agent in env.agents:
-                    from word_play.presets.renderers.renderer import Renderable
                     renderable = agent.get_component(Renderable)
                     if renderable:
                         renderable.last_message = discussion_generator(agent, env)

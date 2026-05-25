@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from .wall_geometry import adjacent_wall_variant_name, wall_connections
+
 if TYPE_CHECKING:
     from .renderer import Pygame_Renderer
 
@@ -52,8 +54,6 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
 
 def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
     """Choose the best wall sprite variant for a tile based on neighbors."""
-    from .wall_geometry import adjacent_wall_variant_name, wall_connections
-
     candidate_roots = candidate_asset_paths(wall_set)
     wall_root = next((path for path in candidate_roots if path.exists() and path.is_dir()), None)
     if wall_root is None:

@@ -161,6 +161,8 @@ def ensure_screen_size(renderer: "Pygame_Renderer", width: int, height: int) -> 
 # Module-level state for the zero-arg render_step() convenience API
 _default_renderer: "Pygame_Renderer | None" = None
 
+# Map both keyboard digit rows to the option index shortcuts shown in the
+# human action sidebar.
 NUMERIC_OPTION_KEYS = {
     pygame.K_0: 0,
     pygame.K_1: 1,
@@ -232,13 +234,11 @@ def _prompt_renderer_loop(
     on_keydown,
     text_input: bool = False,
 ) -> Any:
-    from .draw import render_environment
-
     if text_input:
         pygame.key.start_text_input()
     try:
         while True:
-            render_environment(renderer, env)
+            draw_module.render_environment(renderer, env)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -436,9 +436,7 @@ def render_step(
     Returns:
         True if the window is still open, False if the user closed it.
 
-    Usage — zero-config (auto-creates renderer)::
-
-        from word_play.presets.renderers import render_step
+    Usage - zero-config auto-creates a renderer:
 
         for step in range(100):
             actions = [agent.get_component(Agent_Policy).select_action(env.observe(i))[0]
@@ -446,9 +444,7 @@ def render_step(
             env.step(actions)
             if not render_step(env): break
 
-    Usage — custom renderer (pass your own layout / tile size)::
-
-        from word_play.presets.renderers import Pygame_Renderer, Grid_Layout_Adapter, render_step
+    Usage - pass an existing renderer for custom layout or tile size:
 
         renderer = Pygame_Renderer(layout=Grid_Layout_Adapter(), tile_size=56)
 
@@ -456,15 +452,14 @@ def render_step(
             # ... env.step(actions) ...
             if not render_step(env, renderer=renderer, step_delay=0.3): break
     """
-    from .draw import render_environment
-    from .layout import Environment_Layout_Adapter
-    from .renderer import Pygame_Renderer
-
     global _default_renderer
 
     rend = renderer or _default_renderer
     if rend is None:
-        rend = Pygame_Renderer(layout=Environment_Layout_Adapter(), tile_size=56)
+        rend = renderer_module.Pygame_Renderer(
+            layout=layout_module.Environment_Layout_Adapter(),
+            tile_size=56,
+        )
         _default_renderer = rend
 
     if hasattr(env, "__dict__"):
@@ -473,7 +468,7 @@ def render_step(
     if not rend._pygame_initialized:
         init_pygame_if_needed(rend)
 
-    render_environment(rend, env)
+    draw_module.render_environment(rend, env)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -493,3 +488,8 @@ def render_step(
         time.sleep(step_delay)
 
     return True
+
+
+from . import draw as draw_module
+from . import layout as layout_module
+from . import renderer as renderer_module

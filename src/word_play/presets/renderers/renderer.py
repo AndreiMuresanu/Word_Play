@@ -85,8 +85,7 @@ class Pygame_Renderer(Renderer):
         default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
     ):
         """Configure renderer state, layout mapping, and sizing defaults."""
-        from .runtime import configure_renderer
-        configure_renderer(
+        runtime_module.configure_renderer(
             self,
             layout=layout,
             tile_size=tile_size,
@@ -115,7 +114,9 @@ class Pygame_Renderer(Renderer):
 
     def render(self, env: "Environment") -> None:
         """Initialize pygame if needed and draw the current environment."""
-        from .runtime import init_pygame_if_needed
-        from .draw import render_environment
-        init_pygame_if_needed(self)
-        render_environment(self, env)
+        runtime_module.init_pygame_if_needed(self)
+        draw_module.render_environment(self, env)
+
+
+from . import draw as draw_module
+from . import runtime as runtime_module

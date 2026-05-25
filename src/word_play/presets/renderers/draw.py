@@ -3,26 +3,28 @@ from __future__ import annotations
 import math
 import random
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pygame
 
-from word_play.core import Entity
+from word_play.core import Entity, Environment
+from word_play.presets.systems.inventory import Inventory
 
 from .assets import get_or_load_image, get_scaled_image, resolve_wall_sprite
 from .wall_geometry import collect_wall_positions, normalize_background_item, screen_rect_for_tile, wall_neighbor_mask, world_bounds
-from .renderer import Renderable
+from .renderer import Pygame_Renderer, Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size
 
-if TYPE_CHECKING:
-    from word_play.core import Environment
+try:
+    from word_play.presets.systems.containers import Container, Single_Item_Holder
+except ImportError:
+    Container = None
+    Single_Item_Holder = None
 
-    from .renderer import Pygame_Renderer
-
-
-# Note: Container/Inventory/Crafter imports are done inside functions
-# to avoid circular import issues with renderables module
-
+try:
+    from word_play.presets.systems.crafter import Crafter
+except ImportError:
+    Crafter = None
 
 def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderable]]:
     """Collect visible renderable entities sorted by their draw order."""
@@ -666,12 +668,6 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
         finally:
             renderer.world_surface = previous_world_surface
 
-    # Optional overlays for branch-specific presets. If the corresponding
-    # system modules do not exist on this branch, skip these overlays.
-    try:
-        from word_play.presets.systems.containers import Container
-    except Exception:
-        Container = None
     if Container is not None:
         container = entity.get_component(Container)
         if container is not None and container.is_open:
@@ -683,8 +679,6 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
             finally:
                 renderer.world_surface = previous_world_surface
 
-    # Inventory overlay
-    from word_play.presets.systems.inventory import Inventory
     inventory = entity.get_component(Inventory)
     if inventory is not None:
         inv_list = getattr(inventory, 'contents', [])
@@ -692,10 +686,6 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
             items = inv_list[:2]
             draw_entity_items(renderer, items, px, py, layout_mode="badges", max_items=2, scale=0.50)
 
-    try:
-        from word_play.presets.systems.crafter import Crafter
-    except Exception:
-        Crafter = None
     if Crafter is not None:
         crafter = entity.get_component(Crafter)
         if crafter is not None:
@@ -710,10 +700,6 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
                     if output:
                         draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
 
-    try:
-        from word_play.presets.systems.containers import Single_Item_Holder
-    except Exception:
-        Single_Item_Holder = None
     if Single_Item_Holder is not None:
         holder = entity.get_component(Single_Item_Holder)
         if holder is not None:
@@ -812,7 +798,6 @@ def draw_background_tile(
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
         # Draw placeholder square
-        import pygame
         rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
         pygame.draw.rect(renderer.floor_surface, (40, 50, 60), rect)
         pygame.draw.rect(renderer.floor_surface, (60, 70, 80), rect, 1)
@@ -1144,8 +1129,6 @@ def draw_trade_bubble(
     - Enhanced parchment theme with shadows
     - Proper sprite scaling and centering
     """
-    from .assets import get_or_load_image
-
     px, py = entity_position
     tile_s = renderer.tile_size
     center_x = px + tile_s // 2
@@ -1574,7 +1557,6 @@ def auto_tile_wall_entities(renderer: "Pygame_Renderer", renderables: list[tuple
             wall_entities.append((entity, renderable))
     if not wall_entities:
         return
-    from .assets import resolve_wall_sprite
     for entity, renderable in wall_entities:
         wx, wy = entity.position.x, entity.position.y
         neighbors = wall_neighbor_mask(wx, wy, wall_positions)
