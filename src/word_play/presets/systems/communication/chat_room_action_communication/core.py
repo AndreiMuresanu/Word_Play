@@ -21,18 +21,15 @@ def nearby_conversation_partners(actor: Entity, env: Environment) -> list[Entity
 
 
 def record_chat_message(speaker: Entity, message: str | None, env: Environment) -> None:
+    if message is None:
+        return
     renderable = speaker.get_component(Renderable)
-    if renderable is not None and message is not None:
-        renderable.last_chat_message = str(message)
-        renderable.last_message = str(message)
-        renderable._last_chat_message_step = getattr(env, "cur_step", 0)
-
-
-def record_trade_chat_message(speaker: Entity, message: str | None, env: Environment) -> None:
-    renderable = speaker.get_component(Renderable)
-    if renderable is not None and message is not None:
-        renderable.last_trade_chat_message = str(message)
-        renderable._last_trade_message_step = getattr(env, "cur_step", 0)
+    if renderable is None:
+        return
+    text = str(message)
+    renderable.last_chat_message = text
+    renderable.last_message = text
+    renderable._last_chat_message_step = getattr(env, "cur_step", 0)
 
 
 # TODO: could add a turn order arg which takes as input an ordering func or a str keyword. Just need to be careful to

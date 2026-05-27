@@ -4,12 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
-from word_play.core import Component, Entity
+from word_play.core import Component
 
 if TYPE_CHECKING:
     from word_play.core import Environment
-    from word_play.core.components import Agent_Policy
-
     from .layout import Position_Layout_Adapter
 
 
@@ -25,6 +23,8 @@ class LLMConfig:
 
 class Renderable(Component):
     """Store sprite and overlay metadata for an entity."""
+    hide_from_observation = True
+
     def __init__(
         self,
         sprite_path: str,
@@ -44,8 +44,6 @@ class Renderable(Component):
         emissive_intensity: int = 84,
         last_message: str | None = None,
         last_chat_message: str | None = None,
-        last_trade_message: Any | None = None,
-        last_trade_chat_message: str | None = None,
         speech_bubble_scale: float = 1.0,  # Scale factor for speech bubbles (0.5 = half size)
         wall_set: str | None = None,
     ):
@@ -68,10 +66,7 @@ class Renderable(Component):
         self.emissive_intensity = emissive_intensity
         self.last_chat_message = last_chat_message if last_chat_message is not None else last_message
         self.last_message = last_message
-        self.last_trade_message = last_trade_message
-        self.last_trade_chat_message = last_trade_chat_message
         self._last_chat_message_step: int | None = None
-        self._last_trade_message_step: int | None = None
         self.speech_bubble_scale = speech_bubble_scale
 
 

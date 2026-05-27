@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -190,6 +191,7 @@ NUMERIC_OPTION_KEYS = {
     for digit_keys in (TOP_ROW_DIGIT_KEYS, KEYPAD_DIGIT_KEYS)
     for option_index, key in enumerate(digit_keys)
 }
+ACTION_ARG_OPTION_PATTERN = re.compile(r"(\d+)\s*\(([^)]+)\)")
 
 
 def _sidebar_action_lines(possible_actions: list[Any], selected_index: int | None = None) -> list[str]:
@@ -412,6 +414,98 @@ def prompt_human_multi_select(
         return None
 
     return _prompt_renderer_loop(env, renderer=renderer, on_keydown=on_event)
+
+
+def _action_arg_options(arg_description: str) -> list[tuple[int, str]]:
+    return [
+        (int(idx), label)
+        for idx, label in ACTION_ARG_OPTION_PATTERN.findall(arg_description)
+    ]
+
+
+def _renderer_kwargs_instructions(action_selection: Any, error_message: str | None) -> list[str]:
+    instructions = [
+        str(action_selection),
+        "Type the required values separated by ';'.",
+        "Press Enter to submit.",
+    ]
+    for name, arg in action_selection.required_kwargs.items():
+        instructions.append(
+            f"{name}: {arg.arg_description(action_selection.actor, action_selection.target_entity, action_selection.env)}",
+        )
+    if error_message:
+        instructions.append(f"Error: {error_message}")
+    return instructions
+
+
+def _prompt_human_action_kwargs_options(
+    renderer: "Pygame_Renderer",
+    action_selection: Any,
+    error_message: str | None,
+) -> str | None:
+    if not action_selection.required_kwargs or len(action_selection.required_kwargs) != 1:
+        return None
+
+    arg_name, arg = next(iter(action_selection.required_kwargs.items()))
+    arg_description = arg.arg_description(
+        action_selection.actor,
+        action_selection.target_entity,
+        action_selection.env,
+    )
+    options = _action_arg_options(arg_description)
+    if not options:
+        return None
+
+    return prompt_human_multi_select(
+        renderer,
+        action_selection.env,
+        entity_name=action_selection.actor.name,
+        position_label=str(action_selection.actor.position),
+        header="Action Arguments",
+        instructions=[
+            str(action_selection),
+            f"Choose values for: {arg_name}",
+            "Use Up/Down to move, Space to toggle, Enter to submit.",
+            *([f"Error: {error_message}"] if error_message else []),
+        ],
+        options=options,
+    )
+
+
+def _prompt_human_action_kwargs_text(
+    renderer: "Pygame_Renderer",
+    action_selection: Any,
+    error_message: str | None,
+) -> str:
+    options_text = _prompt_human_action_kwargs_options(renderer, action_selection, error_message)
+    if options_text is not None:
+        return options_text
+
+    return prompt_human_text(
+        renderer,
+        action_selection.env,
+        entity_name=action_selection.actor.name,
+        position_label=str(action_selection.actor.position),
+        header="Action Arguments",
+        instructions=_renderer_kwargs_instructions(action_selection, error_message),
+    )
+
+
+def prompt_human_action_kwargs(
+    renderer: "Pygame_Renderer",
+    action_selection: Any,
+    *,
+    max_attempts: int = 10,
+) -> dict:
+    error_message = None
+    for _ in range(max_attempts):
+        text = _prompt_human_action_kwargs_text(renderer, action_selection, error_message)
+        try:
+            return action_selection.parse_and_validate_kwarg_list(text)
+        except Exception as exc:
+            error_message = str(exc)
+
+    raise RuntimeError("Too many invalid attempts entering arguments.")
 
 
 def render_step(
