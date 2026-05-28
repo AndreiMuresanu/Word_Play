@@ -14,7 +14,20 @@ class Human_Communication_Policy(Communication_Policy):
 
     def send_message(self, recipients: list[Entity], env: Environment, info: str | None = None) -> str:
         if getattr(env, "renderer_impl", None) is not None and self.entity is not None:
-            return self._send_message_with_renderer(recipients, env, info)
+            recipient_names = ", ".join(recipient.name for recipient in recipients) or "nobody"
+            return prompt_human_text(
+                env.renderer_impl,
+                env,
+                entity_name=self.entity.name,
+                position_label=str(self.entity.position),
+                header="Chat",
+                instructions=[
+                    f"Recipients: {recipient_names}",
+                    *([str(info)] if info else []),
+                    "Type your message.",
+                    "Press Enter to send.",
+                ],
+            )
 
         if info:
             print(info)
@@ -27,50 +40,6 @@ class Human_Communication_Policy(Communication_Policy):
         if info:
             print(info)
         print(f"====== Ending conversation with: {[entity.name for entity in participants]} ======")
-
-    def _send_message_with_renderer(
-        self,
-        recipients: list[Entity],
-        env: Environment,
-        info: str | None = None,
-    ) -> str:
-        recipient_names = ", ".join(recipient.name for recipient in recipients) or "nobody"
-        recent_messages = []
-        for entity in getattr(getattr(env, "state", None), "entities", []):
-            renderable = self._renderable_component(entity)
-            if renderable is None or entity is self.entity:
-                continue
-            message = getattr(renderable, "last_chat_message", None) or getattr(renderable, "last_message", None)
-            if message:
-                recent_messages.append(f"{entity.name}: {message}")
-
-        instructions = [
-            f"Recipients: {recipient_names}",
-            *([str(info)] if info else []),
-        ]
-        if recent_messages:
-            instructions.append("Recent chat:")
-            instructions.extend(recent_messages[-6:])
-        instructions.extend([
-            f"Now speaking: {self.entity.name}",
-            "Type your message.",
-            "Press Enter to send.",
-        ])
-
-        return prompt_human_text(
-            env.renderer_impl,
-            env,
-            entity_name=self.entity.name,
-            position_label=str(self.entity.position),
-            header="Chat",
-            instructions=instructions,
-        )
-
-    def _renderable_component(self, entity: Entity):
-        for component in getattr(entity, "components", {}).values():
-            if component.__class__.__name__ == "Renderable":
-                return component
-        return None
 
 
 class TalkingCow(Communication_Policy):

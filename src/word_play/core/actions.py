@@ -53,6 +53,9 @@ class Action_Arg(ABC):
     def arg_description(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         pass
 
+    def options(self, actor: Entity, target_entity: Entity, env: Environment) -> list[tuple[Any, str]]:
+        return []
+
     def is_valid(self, arg, actor: Entity, target_entity: Entity, env: Environment) -> bool:
         return all(validator(arg, actor, target_entity, env) for validator in self.validators)
 

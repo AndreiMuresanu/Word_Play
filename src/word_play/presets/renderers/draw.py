@@ -1090,7 +1090,7 @@ def collect_speech_bubbles(env: "Environment") -> list[dict[str, Any]]:
         renderable = entity.get_component(Renderable)
         if renderable is None:
             continue
-        message = getattr(renderable, "last_chat_message", None) or getattr(renderable, "last_message", None)
+        message = getattr(renderable, "last_chat_message", None)
         if message:
             bubbles.append({
                 "entity_name": entity.name,

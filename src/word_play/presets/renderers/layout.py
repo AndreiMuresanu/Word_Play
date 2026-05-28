@@ -74,12 +74,10 @@ def _expire_render_messages(env) -> None:
         renderable = entity.get_component(Renderable)
         if renderable is None:
             continue
-        chat_step = getattr(renderable, "_last_chat_message_step", getattr(renderable, "_last_message_step", None))
+        chat_step = getattr(renderable, "_last_chat_message_step", None)
         if chat_step is not None and current_step > chat_step + 1:
             renderable.last_chat_message = None
-            renderable.last_message = None
             renderable._last_chat_message_step = None
-            renderable._last_message_step = None
 
 
 class Position_Layout_Adapter(ABC):

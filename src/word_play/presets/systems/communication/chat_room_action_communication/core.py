@@ -28,7 +28,6 @@ def record_chat_message(speaker: Entity, message: str | None, env: Environment) 
         return
     text = str(message)
     renderable.last_chat_message = text
-    renderable.last_message = text
     renderable._last_chat_message_step = getattr(env, "cur_step", 0)
 
 
@@ -89,6 +88,9 @@ class Nearby_Partner_Indicies(List_Arg):
         potential_partners = nearby_conversation_partners(actor, env)
         partners_text = ", ".join(f"{idx} ({entity.name})" for idx, entity in enumerate(potential_partners))
         return f"list of indices representing the conversation participants: {partners_text}"
+
+    def options(self, actor, target_entity, env):
+        return [(idx, entity.name) for idx, entity in enumerate(nearby_conversation_partners(actor, env))]
 
 
 class Start_Private_Conversation(Action):

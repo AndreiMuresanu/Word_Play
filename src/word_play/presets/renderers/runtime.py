@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -191,9 +190,6 @@ NUMERIC_OPTION_KEYS = {
     for digit_keys in (TOP_ROW_DIGIT_KEYS, KEYPAD_DIGIT_KEYS)
     for option_index, key in enumerate(digit_keys)
 }
-ACTION_ARG_OPTION_PATTERN = re.compile(r"(\d+)\s*\(([^)]+)\)")
-
-
 def _sidebar_action_lines(possible_actions: list[Any], selected_index: int | None = None) -> list[str]:
     lines = ["Available actions:"]
     for idx, action in enumerate(possible_actions):
@@ -379,9 +375,9 @@ def prompt_human_multi_select(
         ]
         env.hud_sidebar_selected_action = [
             "Selected indices:",
-            ",".join(str(idx) for idx in sorted(selected)) if selected else "(none)",
+            ",".join(str(idx) for idx in sorted(selected, key=str)) if selected else "(none)",
         ]
-        env.hud_sidebar_actions = ["Conversation partners:"]
+        env.hud_sidebar_actions = ["Options:"]
         for idx, (value, label) in enumerate(options):
             cursor = ">" if idx == cursor_index else " "
             mark = "[x]" if value in selected else "[ ]"
@@ -410,17 +406,10 @@ def prompt_human_multi_select(
             refresh_sidebar()
             return None
         if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            return ",".join(str(idx) for idx in sorted(selected))
+            return ",".join(str(idx) for idx in sorted(selected, key=str))
         return None
 
     return _prompt_renderer_loop(env, renderer=renderer, on_keydown=on_event)
-
-
-def _action_arg_options(arg_description: str) -> list[tuple[int, str]]:
-    return [
-        (int(idx), label)
-        for idx, label in ACTION_ARG_OPTION_PATTERN.findall(arg_description)
-    ]
 
 
 def _renderer_kwargs_instructions(action_selection: Any, error_message: str | None) -> list[str]:
@@ -447,12 +436,11 @@ def _prompt_human_action_kwargs_options(
         return None
 
     arg_name, arg = next(iter(action_selection.required_kwargs.items()))
-    arg_description = arg.arg_description(
+    options = arg.options(
         action_selection.actor,
         action_selection.target_entity,
         action_selection.env,
     )
-    options = _action_arg_options(arg_description)
     if not options:
         return None
 

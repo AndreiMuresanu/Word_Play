@@ -42,7 +42,6 @@ class Renderable(Component):
         animation_fps: float = 5.0,
         emissive_sprite: str | None = None,
         emissive_intensity: int = 84,
-        last_message: str | None = None,
         last_chat_message: str | None = None,
         speech_bubble_scale: float = 1.0,  # Scale factor for speech bubbles (0.5 = half size)
         wall_set: str | None = None,
@@ -64,8 +63,7 @@ class Renderable(Component):
         self.animation_fps = animation_fps
         self.emissive_sprite = emissive_sprite
         self.emissive_intensity = emissive_intensity
-        self.last_chat_message = last_chat_message if last_chat_message is not None else last_message
-        self.last_message = last_message
+        self.last_chat_message = last_chat_message
         self._last_chat_message_step: int | None = None
         self.speech_bubble_scale = speech_bubble_scale
 
