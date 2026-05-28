@@ -15,17 +15,6 @@ from .wall_geometry import collect_wall_positions, normalize_background_item, sc
 from .renderer import Pygame_Renderer, Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size
 
-try:
-    from word_play.presets.systems.containers import Container, Single_Item_Holder
-except ImportError:
-    Container = None
-    Single_Item_Holder = None
-
-try:
-    from word_play.presets.systems.crafter import Crafter
-except ImportError:
-    Crafter = None
-
 def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderable]]:
     """Collect visible renderable entities sorted by their draw order."""
     renderables: list[tuple[int, Entity, Renderable]] = []
@@ -35,19 +24,6 @@ def visible_renderables(env: "Environment") -> list[tuple[int, Entity, Renderabl
             renderables.append((renderable.z_index, entity, renderable))
     renderables.sort(key=lambda item: item[0])
     return renderables
-
-
-def sidebar_is_allowed(env: "Environment") -> bool:
-    """Allow the right HUD only for single-agent envs or envs with human action components."""
-    agents = list(getattr(env, "agents", []) or [])
-    if len(agents) == 1:
-        return True
-
-    for entity in getattr(getattr(env, "state", None), "entities", []):
-        for component in getattr(entity, "components", {}).values():
-            if component.__class__.__name__ == "Human_Takes_Action":
-                return True
-    return False
 
 
 def background_items(env: "Environment", renderer: "Pygame_Renderer") -> list[dict[str, Any]]:
@@ -214,6 +190,52 @@ def entity_world_position(renderer: "Pygame_Renderer", entity: Entity) -> tuple[
     return int(x), int(y)
 
 
+def overlap_grid_dimensions(count: int) -> tuple[int, int]:
+    """Choose a small grid for entities sharing one tile."""
+    if count <= 1:
+        return 1, 1
+    if count <= 2:
+        return 2, 1
+    if count <= 4:
+        return 2, 2
+    if count <= 9:
+        return 3, 3
+    columns = max(1, math.ceil(math.sqrt(count)))
+    return columns, math.ceil(count / columns)
+
+
+def centered_grid_slot(index: int, count: int, columns: int) -> tuple[int, int, int]:
+    """Return col, row, and occupied slots in the row for a compact grid."""
+    row = index // columns
+    col = index % columns
+    remaining = count - row * columns
+    row_slots = max(1, min(columns, remaining))
+    return col, row, row_slots
+
+
+def shared_tile_entity_rect(
+    renderer: "Pygame_Renderer",
+    tile_px: int,
+    tile_py: int,
+    *,
+    index: int,
+    count: int,
+) -> pygame.Rect:
+    """Return the drawn rect for one entity in a shared tile."""
+    if count <= 1:
+        return pygame.Rect(tile_px, tile_py, renderer.tile_size, renderer.tile_size)
+
+    columns, rows = overlap_grid_dimensions(count)
+    col, row, row_slots = centered_grid_slot(index, count, columns)
+    cell_width = renderer.tile_size / columns
+    cell_height = renderer.tile_size / rows
+    size = max(16, int(min(cell_width, cell_height) * 0.94))
+    row_offset = (columns - row_slots) * cell_width / 2
+    px = tile_px + int(row_offset + col * cell_width + (cell_width - size) / 2)
+    py = tile_py + int(row * cell_height + (cell_height - size) / 2)
+    return pygame.Rect(px, py, size, size)
+
+
 def update_camera_state(
     renderer: "Pygame_Renderer",
     env: "Environment",
@@ -284,19 +306,21 @@ def interpolated_entity_screen_position(
     return px, py
 
 
-def draw_focus_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int) -> None:
+def draw_focus_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int, size: int | None = None) -> None:
     """Highlight the focused agent so the camera mode is visually obvious."""
     if renderer.camera_focus_entity_name != entity.name:
         return
-    ring_rect = pygame.Rect(px - 4, py - 4, renderer.tile_size + 8, renderer.tile_size + 8)
+    draw_size = size or renderer.tile_size
+    ring_rect = pygame.Rect(px - 4, py - 4, draw_size + 8, draw_size + 8)
     pygame.draw.rect(renderer.effect_surface, renderer.focus_outline_color, ring_rect, width=3, border_radius=10)
 
 
-def draw_selection_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int) -> None:
+def draw_selection_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int, size: int | None = None) -> None:
     """Highlight the selected entity so inspection is visually anchored."""
     if getattr(renderer, "selected_entity_name", None) != entity.name:
         return
-    ring_rect = pygame.Rect(px - 7, py - 7, renderer.tile_size + 14, renderer.tile_size + 14)
+    draw_size = size or renderer.tile_size
+    ring_rect = pygame.Rect(px - 7, py - 7, draw_size + 14, draw_size + 14)
     glow = pygame.Surface((ring_rect.width + 12, ring_rect.height + 12), pygame.SRCALPHA)
     pygame.draw.rect(glow, (*renderer.selection_outline_color, 58), glow.get_rect(), width=8, border_radius=16)
     renderer.effect_surface.blit(glow, (ring_rect.x - 6, ring_rect.y - 6))
@@ -317,7 +341,10 @@ def draw_selected_entity_card(
     if position is None:
         return
 
-    px, py = position
+    entity_rect = renderer._last_drawn_entity_rects.get(inspected.name)
+    if entity_rect is None:
+        px, py = position
+        entity_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
     stats = entity_primary_stats(inspected, env)
     inventory_entries = entity_inventory_entries(inspected, env)
     title_font = renderer.hud_font
@@ -373,8 +400,8 @@ def draw_selected_entity_card(
     top_info_height = max(portrait_size, text_block_height)
     card_height = metrics["outer_pad"] * 2 + top_info_height
     tail_height = metrics["tail_height"]
-    card_x = px + renderer.tile_size // 2 - card_width // 2
-    card_y = py - card_height - tail_height - metrics["outer_pad"]
+    card_x = entity_rect.centerx - card_width // 2
+    card_y = entity_rect.top - card_height - tail_height - metrics["outer_pad"]
 
     world_width = renderer.effect_surface.get_width()
     world_height = renderer.effect_surface.get_height()
@@ -396,12 +423,12 @@ def draw_selected_entity_card(
         border_radius=metrics["corner_radius"],
     )
 
-    tail_anchor_x = px + renderer.tile_size // 2
+    tail_anchor_x = entity_rect.centerx
     tail_anchor_x = max(card_rect.left + 24, min(tail_anchor_x, card_rect.right - 24))
     tail = [
         (tail_anchor_x - 12, card_rect.bottom - 2),
         (tail_anchor_x + 12, card_rect.bottom - 2),
-        (px + renderer.tile_size // 2, py - 8),
+        (entity_rect.centerx, entity_rect.top - 8),
     ]
     pygame.draw.polygon(renderer.effect_surface, (24, 30, 42, 238), tail)
     pygame.draw.polygon(renderer.effect_surface, renderer.selection_panel_accent, tail, width=2)
@@ -531,70 +558,25 @@ def draw_wall_background_tile(
 
 
 
-def draw_entity_items(
+def draw_inventory_badges(
     renderer: "Pygame_Renderer",
     items: list[Entity],
     px: int,
     py: int,
     *,
-    layout_mode: str = "grid",  # "grid", "badges", "center", "corner"
-    max_items: int = 4,
-    scale: float = 0.45,
-    
+    sprite_size: int,
 ) -> None:
-    """Draw items as overlays on an entity using flexible layouts.
-
-    Args:
-        layout_mode: How to position items:
-            - "grid": 2x2 centered grid (for containers)
-            - "badges": Top-right and bottom-left corners (for inventory)
-            - "center": Single centered item (for holders, crafter output)
-            - "corner": Top-right corner only (for crafter input)
-        max_items: Maximum items to display (1-4)
-        scale: Size as fraction of tile_size
-        fallback_colors: Colors for fallback squares per item
-    """
-    if not items or max_items <= 0:
+    """Draw up to two inventory item badges on an entity."""
+    if not items:
         return
 
-    tile_s = renderer.tile_size
+    item_size = max(10, int(sprite_size * 0.50))
+    positions = [
+        (px + sprite_size - item_size - 2, py + 2),
+        (px + 2, py + sprite_size - item_size - 2),
+    ]
 
-    # Calculate item size
-    if layout_mode == "center":
-        item_size = max(20, int(tile_s * 0.55))
-    elif layout_mode == "badges":
-        item_size = max(14, int(tile_s * scale))
-    else:
-        item_size = max(16, int(tile_s * scale))
-
-    # Define positions based on layout
-    if layout_mode == "grid":
-        gap = max(2, int(tile_s * 0.05))
-        total = 2 * item_size + gap
-        start_x = px + (tile_s - total) // 2
-        start_y = py + (tile_s - total) // 2
-        positions = [
-            (start_x, start_y),  # top-left
-            (start_x + item_size + gap, start_y),  # top-right
-            (start_x, start_y + item_size + gap),  # bottom-left
-            (start_x + item_size + gap, start_y + item_size + gap),  # bottom-right
-        ]
-    elif layout_mode == "badges":
-        positions = [
-            (px + tile_s - item_size - 2, py + 2),  # top-right
-            (px + 2, py + tile_s - item_size - 2),  # bottom-left
-        ]
-    elif layout_mode == "center":
-        positions = [(px + (tile_s - item_size) // 2, py + (tile_s - item_size) // 2)]
-    elif layout_mode == "corner":
-        positions = [(px + tile_s - item_size - 2, py + 2)]  # top-right
-    else:
-        positions = [(px, py)]  # fallback
-
-    # Draw each item
-    for idx, item in enumerate(items[:max_items]):
-        if idx >= len(positions):
-            break
+    for idx, item in enumerate(items[:2]):
         draw_x, draw_y = positions[idx]
 
         renderable = item.get_component(Renderable)
@@ -605,26 +587,25 @@ def draw_entity_items(
         if image is not None:
             renderer.effect_surface.blit(image, (draw_x, draw_y))
 
-    # Draw ellipsis if more items exist (grid mode only)
-    if layout_mode == "grid" and len(items) > max_items:
-        gap = max(2, int(tile_s * 0.05))
-        total = 2 * item_size + gap
-        ellipsis_x = px + (tile_s + total) // 2 + gap
-        ellipsis_y = py + (tile_s + total) // 2 - item_size // 2
-        surface = renderer.small_font.render("...", True, (200, 200, 200))
-        renderer.effect_surface.blit(surface, (ellipsis_x, ellipsis_y))
 
-
-# Deprecated: use draw_entity_items() instead
-def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Renderable, px: int, py: int) -> None:
+def draw_entity(
+    renderer: "Pygame_Renderer",
+    entity: Entity,
+    renderable: Renderable,
+    px: int,
+    py: int,
+    *,
+    draw_size: int | None = None,
+) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
+    sprite_size = draw_size or renderer.tile_size
     sprite_name = animated_sprite_name(renderable)
     image = get_or_load_image(renderer, sprite_name)
     if image is None:
         raise FileNotFoundError(
             f"Sprite renderer expected a valid sprite path for '{entity.name}', but could not resolve '{sprite_name}'."
         )
-    scaled_image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
+    scaled_image = get_scaled_image(renderer, sprite_name, sprite_size, sprite_size)
     if scaled_image is None:
         raise FileNotFoundError(
             f"Sprite renderer expected a valid sprite path for '{entity.name}', but could not resolve '{sprite_name}'."
@@ -635,77 +616,47 @@ def draw_entity(renderer: "Pygame_Renderer", entity: Entity, renderable: Rendera
     shadow_scale = max(0.2, float(getattr(renderable, "shadow_scale", 0.72)))
     is_wall = renderable.wall_set is not None
     if not is_wall:
-        shadow_width = max(14, int(renderer.tile_size * shadow_scale))
-        shadow_height = max(8, int(renderer.tile_size * max(0.18, shadow_scale * 0.32)))
+        shadow_width = max(8, int(sprite_size * shadow_scale))
+        shadow_height = max(5, int(sprite_size * max(0.18, shadow_scale * 0.32)))
         shadow = pygame.Surface((shadow_width, shadow_height), pygame.SRCALPHA)
         pygame.draw.ellipse(shadow, (0, 0, 0, 72), shadow.get_rect())
-        shadow_x = px + (renderer.tile_size - shadow_width) // 2
-        shadow_y = py + renderer.tile_size - shadow_height // 2 - max(2, renderer.tile_size // 12)
+        shadow_x = px + (sprite_size - shadow_width) // 2
+        shadow_y = py + sprite_size - shadow_height // 2 - max(2, sprite_size // 12)
         renderer.shadow_surface.blit(shadow, (shadow_x, shadow_y))
     renderer.entity_surface.blit(scaled_image, (px, py))
-    renderer._last_drawn_entity_rects[entity.name] = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
-    draw_selection_ring(renderer, entity, px, py)
-    draw_focus_ring(renderer, entity, px, py)
+    renderer._last_drawn_entity_rects[entity.name] = pygame.Rect(px, py, sprite_size, sprite_size)
+    draw_selection_ring(renderer, entity, px, py, sprite_size)
+    draw_focus_ring(renderer, entity, px, py, sprite_size)
 
     if renderable.overlay_sprite:
         mode = getattr(renderable, "overlay_mode", "badge")
         scale = getattr(renderable, "overlay_scale", None)
         if mode == "full":
-            overlay_size = renderer.tile_size
+            overlay_size = sprite_size
             anchor = "top_left"
         elif mode == "center":
             ratio = scale if scale is not None else 0.72
-            overlay_size = max(20, int(renderer.tile_size * ratio))
+            overlay_size = max(12, int(sprite_size * ratio))
             anchor = "center"
         else:
             ratio = scale if scale is not None else 0.32
-            overlay_size = max(14, int(renderer.tile_size * ratio))
+            overlay_size = max(10, int(sprite_size * ratio))
             anchor = "top_right"
-        previous_world_surface = renderer.world_surface
-        renderer.world_surface = renderer.effect_surface
-        try:
-            blit_scaled_sprite(renderer, renderable.overlay_sprite, px, py, width=overlay_size, height=overlay_size, anchor=anchor)
-        finally:
-            renderer.world_surface = previous_world_surface
-
-    if Container is not None:
-        container = entity.get_component(Container)
-        if container is not None and container.is_open:
-            visible = container.visible_contents()[:4] if hasattr(container, "visible_contents") else []
-            previous_world_surface = renderer.world_surface
-            renderer.world_surface = renderer.effect_surface
-            try:
-                draw_entity_items(renderer, visible, px, py, layout_mode="grid", max_items=4)
-            finally:
-                renderer.world_surface = previous_world_surface
+        overlay = get_scaled_image(renderer, renderable.overlay_sprite, overlay_size, overlay_size)
+        if overlay is not None:
+            if anchor == "top_left":
+                overlay_pos = (px, py)
+            elif anchor == "top_right":
+                overlay_pos = (px + sprite_size - overlay_size, py)
+            else:
+                overlay_pos = (px + (sprite_size - overlay_size) // 2, py + (sprite_size - overlay_size) // 2)
+            renderer.effect_surface.blit(overlay, overlay_pos)
 
     inventory = entity.get_component(Inventory)
     if inventory is not None:
-        inv_list = getattr(inventory, 'contents', [])
-        if len(inv_list) > 0 and not getattr(renderable, 'overlay_sprite', None):
-            items = inv_list[:2]
-            draw_entity_items(renderer, items, px, py, layout_mode="badges", max_items=2, scale=0.50)
-
-    if Crafter is not None:
-        crafter = entity.get_component(Crafter)
-        if crafter is not None:
-            has_inputs = len(crafter.staged_items) > 0
-            has_output = crafter.output_item is not None
-            output_already_drawn = has_output and getattr(renderable, 'overlay_sprite', None)
-            if has_inputs or has_output:
-                if crafter.staged_items:
-                    draw_entity_items(renderer, [crafter.staged_items[0]], px, py, layout_mode="corner", max_items=1, scale=0.42)
-                if not output_already_drawn:
-                    output = getattr(crafter, "output_item", None)
-                    if output:
-                        draw_entity_items(renderer, [output], px, py, layout_mode="center", max_items=1, scale=0.55)
-
-    if Single_Item_Holder is not None:
-        holder = entity.get_component(Single_Item_Holder)
-        if holder is not None:
-            stored = getattr(holder, 'stored_item', None)
-            if stored:
-                draw_entity_items(renderer, [stored], px, py, layout_mode="center", max_items=1, scale=0.55)
+        items = list(getattr(inventory, "inventory", []) or getattr(inventory, "contents", []) or [])
+        if items and not getattr(renderable, "overlay_sprite", None):
+            draw_inventory_badges(renderer, items, px, py, sprite_size=sprite_size)
 
     emissive_sprite = getattr(renderable, "emissive_sprite", None)
     if emissive_sprite:
@@ -747,31 +698,26 @@ def draw_hit_effects(
         if not entity_name or not sprite_name or entity_name not in entity_positions:
             continue
 
-        px, py = entity_positions[entity_name]
+        entity_rect = renderer._last_drawn_entity_rects.get(entity_name)
+        if entity_rect is None:
+            px, py = entity_positions[entity_name]
+            entity_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
         ratio = float(effect.get("scale", 0.75))
-        effect_size = max(20, int(renderer.tile_size * ratio))
-        previous_world_surface = renderer.world_surface
-        renderer.world_surface = renderer.effect_surface
-        try:
-            blit_scaled_sprite(
-                renderer,
-                str(sprite_name),
-                px,
-                py,
-                width=effect_size,
-                height=effect_size,
-                anchor="center",
-                missing_ok=True,
+        effect_size = max(12, int(max(entity_rect.width, entity_rect.height) * ratio))
+        effect_image = get_scaled_image(renderer, str(sprite_name), effect_size, effect_size)
+        if effect_image is not None:
+            effect_pos = (
+                entity_rect.centerx - effect_size // 2,
+                entity_rect.centery - effect_size // 2,
             )
-        finally:
-            renderer.world_surface = previous_world_surface
+            renderer.effect_surface.blit(effect_image, effect_pos)
 
         for particle_index in range(6):
-            offset_x = int(math.cos((particle_index / 6) * math.tau + time.monotonic() * 4.0) * renderer.tile_size * 0.18)
-            offset_y = int(math.sin((particle_index / 6) * math.tau + time.monotonic() * 4.0) * renderer.tile_size * 0.18)
+            offset_x = int(math.cos((particle_index / 6) * math.tau + time.monotonic() * 4.0) * entity_rect.width * 0.18)
+            offset_y = int(math.sin((particle_index / 6) * math.tau + time.monotonic() * 4.0) * entity_rect.height * 0.18)
             particle_rect = pygame.Rect(
-                px + renderer.tile_size // 2 + offset_x - 2,
-                py + renderer.tile_size // 2 + offset_y - 2,
+                entity_rect.centerx + offset_x - 2,
+                entity_rect.centery + offset_y - 2,
                 4,
                 4,
             )
@@ -1075,27 +1021,20 @@ def fit_wrapped_text_lines(
     return fallback_font, lines
 
 
-def collect_speech_bubbles(env: "Environment") -> list[dict[str, Any]]:
-    """Collect speech bubbles from environment or renderable components.
-
-    Priority:
-    1. If env has speech_bubbles attribute, use those directly
-    2. Otherwise, scan entity Renderable components for last_chat_message
-    """
-    bubbles = list(getattr(env, "speech_bubbles", []))
-    if bubbles:
-        return bubbles
-
+def collect_speech_bubbles(env: "Environment") -> list[tuple[Entity, str]]:
+    """Collect speech bubbles from Renderable components."""
+    current_step = getattr(env, "cur_step", 0)
+    bubbles: list[tuple[Entity, str]] = []
     for entity in getattr(getattr(env, "state", None), "entities", []):
         renderable = entity.get_component(Renderable)
         if renderable is None:
             continue
+        chat_step = getattr(renderable, "_last_chat_message_step", None)
+        if chat_step is not None and current_step > chat_step + 1:
+            continue
         message = getattr(renderable, "last_chat_message", None)
         if message:
-            bubbles.append({
-                "entity_name": entity.name,
-                "text": str(message),
-            })
+            bubbles.append((entity, str(message)))
 
     return bubbles
 
@@ -1110,27 +1049,37 @@ def draw_speech_bubbles(
     if not speech_bubbles:
         return
 
-    # Build entity lookup for getting speech_bubble_scale
-    entities = list(getattr(getattr(env, "state", None), "entities", []))
-    entity_by_name = {entity.name: entity for entity in entities}
-
-    for bubble in speech_bubbles:
-        entity_name = bubble.get("entity_name")
-        text = str(bubble.get("text", "")).strip()
-        if not entity_name or not text or entity_name not in entity_positions:
+    visible_bubbles: list[tuple[Entity, str, pygame.Rect, tuple[int, int]]] = []
+    bubble_groups: dict[tuple[int, int], list[str]] = {}
+    for entity, message in speech_bubbles:
+        text = message.strip()
+        if not text:
             continue
+        entity_rect = renderer._last_drawn_entity_rects.get(entity.name)
+        if entity_rect is None:
+            if entity.name not in entity_positions:
+                continue
+            px, py = entity_positions[entity.name]
+            entity_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
+        group_key = (
+            (entity_rect.centerx - renderer.viewport_pad_w) // max(1, renderer.tile_size),
+            (entity_rect.centery - renderer.viewport_pad_n) // max(1, renderer.tile_size),
+        )
+        visible_bubbles.append((entity, text, entity_rect, group_key))
+        bubble_groups.setdefault(group_key, []).append(entity.name)
 
-        # Get per-entity scale from Renderable, default to 1.0
+    for entity, text, entity_rect, group_key in visible_bubbles:
         scale = 1.0
-        entity = entity_by_name.get(entity_name)
-        if entity:
-            r = entity.get_component(Renderable)
-            if r:
-                scale = getattr(r, "speech_bubble_scale", 1.0)
+        renderable = entity.get_component(Renderable)
+        if renderable is not None:
+            scale = getattr(renderable, "speech_bubble_scale", 1.0)
 
-        px, py = entity_positions[entity_name]
-        anchor_x = px + renderer.tile_size // 2
-        anchor_y = py + max(4, renderer.tile_size // 6)
+        group = bubble_groups[group_key]
+        columns, rows = overlap_grid_dimensions(len(group))
+        col, row, row_slots = centered_grid_slot(group.index(entity.name), len(group), columns)
+
+        anchor_x = entity_rect.centerx
+        anchor_y = entity_rect.top + max(4, min(renderer.tile_size // 6, entity_rect.height // 3))
 
         # Apply scale to bubble dimensions
         bubble_width = max(int(renderer.tile_size * 2.55 * scale), int(140 * scale))
@@ -1159,17 +1108,31 @@ def draw_speech_bubbles(
             text_height + pad_top + pad_bottom,
             int(renderer.tile_size * (0.78 + 0.28 * len(lines))),
         )
-        bubble_x = anchor_x - bubble_width // 2
-        bubble_y = max(6, anchor_y - bubble_height - tail_height)
+        horizontal_gap = max(8, renderer.tile_size // 6)
+        horizontal_offset = int((col - (row_slots - 1) / 2) * (bubble_width + horizontal_gap))
+        bubble_x = anchor_x - bubble_width // 2 + horizontal_offset
+        world_width = renderer.effect_surface.get_width()
+        if world_width > bubble_width + 12:
+            bubble_x = max(6, min(bubble_x, world_width - bubble_width - 6))
+        else:
+            bubble_x = 6
+
+        vertical_gap = max(6, renderer.tile_size // 10)
+        vertical_offset = int((rows - 1 - row) * (bubble_height + tail_height + vertical_gap))
+        bubble_y = max(6, anchor_y - bubble_height - tail_height - vertical_offset)
         content_left = bubble_x + pad_left
         content_top = bubble_y + pad_top
         content_width = bubble_width - pad_left - pad_right
         content_height = bubble_height - pad_top - pad_bottom
 
         bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_width, bubble_height)
+        tail_base_x = max(
+            bubble_rect.left + tail_width // 2,
+            min(anchor_x, bubble_rect.right - tail_width // 2),
+        )
         tail = [
-            (anchor_x - tail_width // 2, bubble_rect.bottom - 2),
-            (anchor_x + tail_width // 2, bubble_rect.bottom - 2),
+            (tail_base_x - tail_width // 2, bubble_rect.bottom - 2),
+            (tail_base_x + tail_width // 2, bubble_rect.bottom - 2),
             (anchor_x, anchor_y),
         ]
         pygame.draw.rect(renderer.effect_surface, (250, 245, 233), bubble_rect, border_radius=radius)
@@ -1231,11 +1194,11 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment") -> None:
 
     grid_width = max(1, max_x - min_x + 1)
     grid_height = max(1, max_y - min_y + 1)
-    sidebar_lines = list(getattr(env, "hud_sidebar_lines", []))
-    selected_action_lines = list(getattr(env, "hud_sidebar_selected_action", []))
-    action_lines = list(getattr(env, "hud_sidebar_actions", []))
-    needs_sidebar = sidebar_is_allowed(env) and bool(sidebar_lines or selected_action_lines or action_lines)
-    requested_sidebar_width = int(getattr(env, "hud_sidebar_width", 380 if needs_sidebar else 0)) if needs_sidebar else 0
+    sidebar_lines = list(getattr(env, "hud_sidebar_lines", []) or [])
+    selected_action_lines = list(getattr(env, "hud_sidebar_selected_action", []) or [])
+    action_lines = list(getattr(env, "hud_sidebar_actions", []) or [])
+    needs_sidebar = bool(sidebar_lines or selected_action_lines or action_lines)
+    requested_sidebar_width = int(getattr(env, "hud_sidebar_width", 0) or 380) if needs_sidebar else 0
     hud_visible = not getattr(env, "hide_bottom_hud", False)
     resolved_tile_size = fitted_tile_size(
         renderer,
@@ -1285,7 +1248,8 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment") -> None:
 
     auto_tile_wall_entities(renderer, renderables)
 
-    positions: dict[str, tuple[int, int]] = {}
+    visible_entity_draws: list[tuple[Entity, Renderable, tuple[int, int], tuple[int, int]]] = []
+    shared_tile_groups: dict[tuple[int, int], list[str]] = {}
     for _, entity, renderable in renderables:
         world_position = entity_world_position(renderer, entity)
         if world_position is None:
@@ -1302,9 +1266,25 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment") -> None:
         )
         if position is None:
             continue
+        visible_entity_draws.append((entity, renderable, world_position, position))
+        if renderable.wall_set is None:
+            shared_tile_groups.setdefault(world_position, []).append(entity.name)
+
+    positions: dict[str, tuple[int, int]] = {}
+    for entity, renderable, world_position, position in visible_entity_draws:
         px, py = position
-        positions[entity.name] = position
-        draw_entity(renderer, entity, renderable, px, py)
+        draw_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
+        group = shared_tile_groups.get(world_position, [])
+        if renderable.wall_set is None and len(group) > 1:
+            draw_rect = shared_tile_entity_rect(
+                renderer,
+                px,
+                py,
+                index=group.index(entity.name),
+                count=len(group),
+            )
+        positions[entity.name] = (draw_rect.x, draw_rect.y)
+        draw_entity(renderer, entity, renderable, draw_rect.x, draw_rect.y, draw_size=draw_rect.width)
 
     draw_hit_effects(renderer, env, positions)
     draw_speech_bubbles(renderer, env, positions)

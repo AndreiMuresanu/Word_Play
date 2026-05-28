@@ -69,7 +69,7 @@ class RunSessionConfig:
     initial_notes: list[str] | None = None
 
     # Callbacks
-    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None
+    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection | None", dict], None] | None = None
 
     # Phase-specific
     use_phases: bool = False
@@ -83,7 +83,21 @@ def _apply_agent_sidebar(env: Any, *, observation: Any | None = None, header: st
     if header is not None:
         env.hud_sidebar_header = header
     if observation is not None:
-        env.hud_sidebar_lines = [str(observation)]
+        possible_actions = list(getattr(observation, "possible_actions", []))
+        agent = getattr(observation, "agent", None)
+        env.hud_sidebar_width = max(int(getattr(env, "hud_sidebar_width", 0) or 0), 420)
+        env.hud_sidebar_lines = (
+            [f"You are {agent.name} at {agent.position}."]
+            if agent is not None
+            else [str(observation)]
+        )
+        env.hud_sidebar_selected_action = ["Selected action:", "(waiting for input)"]
+        env.hud_sidebar_actions = [
+            "Available actions:",
+            *(f"[{idx}] {action}" for idx, action in enumerate(possible_actions)),
+        ]
+        if len(env.hud_sidebar_actions) == 1:
+            env.hud_sidebar_actions.append("(no actions available)")
 
 
 def _apply_policy_selection_sidebar(
@@ -94,18 +108,11 @@ def _apply_policy_selection_sidebar(
     info: dict[str, Any] | None = None,
 ) -> None:
     """Populate lightweight selected-action and action-list sidebar sections."""
+    _apply_agent_sidebar(env, observation=observation)
     env.hud_sidebar_selected_action = [
         "Chosen Action:",
         str(selection) if selection is not None else "(no action chosen yet)",
     ]
-    if observation is not None:
-        possible_actions = list(getattr(observation, "possible_actions", []))
-        env.hud_sidebar_actions = [
-            "Possible Actions:",
-            *(f"[{idx}] {action}" for idx, action in enumerate(possible_actions)),
-        ]
-        if len(env.hud_sidebar_actions) == 1:
-            env.hud_sidebar_actions.append("(no actions available)")
 
 
 def run_session(config: RunSessionConfig) -> str | None:
@@ -137,7 +144,7 @@ def run_session(config: RunSessionConfig) -> str | None:
     # Create renderer
     renderer = Pygame_Renderer(layout=config.layout or Environment_Layout_Adapter(), tile_size=resolved_tile_size)
     env = config.env if config.env is not None else config.build_env(renderer)
-    if hasattr(env, "renderer_impl"):
+    if hasattr(env, "__dict__"):
         env.renderer_impl = renderer
     env_width = getattr(env, "width", None)
     env_height = getattr(env, "height", None)
@@ -235,7 +242,7 @@ def run_session(config: RunSessionConfig) -> str | None:
 
     # Determine on_policy_selection callback
     selection_callback = config.on_policy_selection
-    if selection_callback is None and config.policy_mode == "llm" and len(env.agents) <= 1:
+    if selection_callback is None and len(env.agents) <= 1:
         _sidebar_aid = config.sidebar_agent_id
         selection_callback = lambda env, obs, aid, sel, info: (
             _apply_policy_selection_sidebar(env, observation=obs, selection=sel, info=info)
@@ -275,6 +282,7 @@ def _build_phase_step_builder(discuss_steps: int, act_steps: int, discussion_gen
                 if renderable:
                     message = discussion_generator(agent, env)
                     renderable.last_chat_message = message
+                    renderable._last_chat_message_step = getattr(env, "cur_step", current_step)
             env.step([])
             return {"action_selections": [], "phase": "discuss", "step": current_step}
         else:
@@ -381,7 +389,6 @@ class ReplayFrameEnvironment:
         self.truncations = list(frame.get("truncations", []))
         self.final_boss_defeated = bool(frame.get("final_boss_defeated", False))
         self.speech_bubble_sprite = frame.get("speech_bubble_sprite")
-        self.speech_bubbles = list(frame.get("speech_bubbles", []))
         self.event_log = list(frame.get("event_log", []))
         self.hit_entity_names = list(frame.get("hit_entity_names", []))
         self.hit_effects = list(frame.get("hit_effects", []))
@@ -1103,7 +1110,7 @@ def run_live_view(
 def build_policy_step_actions(
     env: "Environment",
     *,
-    on_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None,
+    on_selection: Callable[["Environment", Any, int, "Action_Selection | None", dict], None] | None = None,
 ) -> list["Action_Selection"]:
     """Build one action per agent by querying each attached Agent_Policy or Non_Agent_Policy."""
     selections: list[Action_Selection] = []
@@ -1111,6 +1118,8 @@ def build_policy_step_actions(
         # Check for Agent_Policy first (LLM policies), then fall back to Non_Agent_Policy (preview/sequence policies)
         policy = agent.get_component(Agent_Policy)
         observation = env.observe(agent_id)
+        if on_selection is not None:
+            on_selection(env, observation, agent_id, None, {})
         
         if policy is not None:
             # Agent_Policy: takes observation, returns (Action_Selection, info)
@@ -1135,7 +1144,7 @@ def run_policy_live_view(
     *,
     env: "Environment",
     step_builder: Callable[["Environment"], list["Action_Selection"]] | None = None,
-    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None,
+    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection | None", dict], None] | None = None,
     **kwargs,
 ) -> list[dict[str, Any]]:
     """Run the live viewer with policy-driven stepping and env.reset()-based resets."""
@@ -1163,7 +1172,7 @@ def _run_render_session(
     llm_policy_builder: Callable[["Environment", Entity, str], "Agent_Policy"] | None = None,
     sidebar_width: int | None = None,
     sidebar_agent_id: int = 0,
-    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection", dict], None] | None = None,
+    on_policy_selection: Callable[["Environment", Any, int, "Action_Selection | None", dict], None] | None = None,
     keep_logs: bool = True,
     log_path: str | None = None,
     log_root: str | None = None,
@@ -1187,7 +1196,7 @@ def _run_render_session(
     resolved_tile_size = tile_size or 32
     renderer = Pygame_Renderer(layout=layout or Environment_Layout_Adapter(), tile_size=resolved_tile_size)
     env = env if env is not None else build_env(renderer)
-    if hasattr(env, "renderer_impl"):
+    if hasattr(env, "__dict__"):
         env.renderer_impl = renderer
 
     if tile_size is None:
@@ -1278,18 +1287,14 @@ def _run_render_session(
         on_policy_selection=(
             on_policy_selection
             if on_policy_selection is not None
-            else (
-                None
-                if policy_mode != "llm"
-                else lambda env, observation, agent_id, selection, info: (
-                    _apply_policy_selection_sidebar(
-                        env,
-                        observation=observation,
-                        selection=selection,
-                        info=info,
-                    )
-                    if agent_id == sidebar_agent_id else None
+            else lambda env, observation, agent_id, selection, info: (
+                _apply_policy_selection_sidebar(
+                    env,
+                    observation=observation,
+                    selection=selection,
+                    info=info,
                 )
+                if agent_id == sidebar_agent_id else None
             )
         ),
         keep_logs=keep_logs or policy_mode == "llm",
@@ -1435,6 +1440,7 @@ def _run_render_session_with_phases(
                     if renderable:
                         message = discussion_generator(agent, env)
                         renderable.last_chat_message = message
+                        renderable._last_chat_message_step = getattr(env, "cur_step", step)
 
             return []
         else:

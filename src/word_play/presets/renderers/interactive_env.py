@@ -248,7 +248,6 @@ def capture_environment_frame(
         "hide_bottom_hud": bool(getattr(env, "hide_bottom_hud", False)),
         "sight_radius": getattr(env, "sight_radius", None),
         "speech_bubble_sprite": getattr(env, "speech_bubble_sprite", None),
-        "speech_bubbles": _json_safe(list(getattr(env, "speech_bubbles", []))),
         "event_log": list(getattr(env, "event_log", [])),
         "hit_entity_names": hit_entity_names,
         "hit_effects": _json_safe(list(getattr(env, "hit_effects", []))),

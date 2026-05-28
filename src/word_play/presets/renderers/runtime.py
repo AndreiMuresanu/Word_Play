@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pygame
 
@@ -161,339 +161,29 @@ def ensure_screen_size(renderer: "Pygame_Renderer", width: int, height: int) -> 
 # Module-level state for the zero-arg render_step() convenience API
 _default_renderer: "Pygame_Renderer | None" = None
 
-TOP_ROW_DIGIT_KEYS = (
-    pygame.K_0,
-    pygame.K_1,
-    pygame.K_2,
-    pygame.K_3,
-    pygame.K_4,
-    pygame.K_5,
-    pygame.K_6,
-    pygame.K_7,
-    pygame.K_8,
-    pygame.K_9,
-)
-KEYPAD_DIGIT_KEYS = (
-    pygame.K_KP0,
-    pygame.K_KP1,
-    pygame.K_KP2,
-    pygame.K_KP3,
-    pygame.K_KP4,
-    pygame.K_KP5,
-    pygame.K_KP6,
-    pygame.K_KP7,
-    pygame.K_KP8,
-    pygame.K_KP9,
-)
-NUMERIC_OPTION_KEYS = {
-    key: option_index
-    for digit_keys in (TOP_ROW_DIGIT_KEYS, KEYPAD_DIGIT_KEYS)
-    for option_index, key in enumerate(digit_keys)
-}
-def _sidebar_action_lines(possible_actions: list[Any], selected_index: int | None = None) -> list[str]:
-    lines = ["Available actions:"]
-    for idx, action in enumerate(possible_actions):
-        prefix = ">" if selected_index == idx else " "
-        lines.append(f"{prefix} [{idx}] {action}")
-    if len(lines) == 1:
-        lines.append("(no valid actions)")
-    return lines
 
+def _sync_sidebar_from_observation(env, sidebar_agent_id: int) -> None:
+    if not hasattr(env, "observe") or not getattr(env, "agents", None):
+        return
+    if not (0 <= sidebar_agent_id < len(env.agents)):
+        return
 
-def _set_human_prompt_sidebar(
-    env: Any,
-    *,
-    header: str,
-    entity_name: str,
-    position_label: str,
-    instructions: list[str],
-    possible_actions: list[Any] | None = None,
-    selected_index: int | None = None,
-    message_buffer: str | None = None,
-) -> None:
-    env.hud_sidebar_width = max(int(getattr(env, "hud_sidebar_width", 0) or 0), 420)
-    env.hud_sidebar_header = header
-    env.hud_sidebar_lines = [
-        f"You are {entity_name} at {position_label}.",
-        *instructions,
-    ]
-    if message_buffer is not None:
-        env.hud_sidebar_selected_action = ["Your message:", f"{message_buffer}_"]
-        env.hud_sidebar_actions = []
-    else:
-        chosen = (
-            str(possible_actions[selected_index])
-            if possible_actions and selected_index is not None and 0 <= selected_index < len(possible_actions)
-            else "(no action chosen yet)"
-        )
-        env.hud_sidebar_selected_action = ["Selected action:", chosen]
-        env.hud_sidebar_actions = _sidebar_action_lines(list(possible_actions or []), selected_index=selected_index)
-
-
-def _prompt_renderer_loop(
-    env: Any,
-    *,
-    renderer: "Pygame_Renderer",
-    on_keydown,
-    text_input: bool = False,
-) -> Any:
-    if text_input:
-        pygame.key.start_text_input()
-    try:
-        while True:
-            draw_module.render_environment(renderer, env)
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    raise KeyboardInterrupt
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    pygame.quit()
-                    raise KeyboardInterrupt
-                result = on_keydown(event)
-                if result is not None:
-                    return result
-            time.sleep(0.01)
-    finally:
-        if text_input:
-            pygame.key.stop_text_input()
-
-
-def prompt_human_action(renderer: "Pygame_Renderer", env: Any, observation: Any) -> Any:
+    observation = env.observe(sidebar_agent_id)
     possible_actions = list(getattr(observation, "possible_actions", []))
-    if not possible_actions:
-        raise RuntimeError("No valid actions available for human-controlled entity.")
+    agent = getattr(observation, "agent", None) or env.agents[sidebar_agent_id]
+    if not hasattr(env, "__dict__"):
+        return
 
-    entity = getattr(observation, "agent", None) or possible_actions[0].actor
-    selected_index = 0
-
-    def refresh_sidebar() -> None:
-        _set_human_prompt_sidebar(
-            env,
-            header="Human Action",
-            entity_name=getattr(entity, "name", "Unknown"),
-            position_label=str(getattr(entity, "position", "?")),
-            instructions=[
-                "Use Up/Down to choose an action.",
-                "Press Enter to confirm.",
-            ],
-            possible_actions=possible_actions,
-            selected_index=selected_index,
-        )
-
-    refresh_sidebar()
-
-    def on_event(event):
-        nonlocal selected_index
-        if event.type != pygame.KEYDOWN:
-            return None
-        if event.key == pygame.K_UP:
-            selected_index = (selected_index - 1) % len(possible_actions)
-            refresh_sidebar()
-            return None
-        if event.key == pygame.K_DOWN:
-            selected_index = (selected_index + 1) % len(possible_actions)
-            refresh_sidebar()
-            return None
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            return possible_actions[selected_index]
-        if event.key in NUMERIC_OPTION_KEYS:
-            idx = NUMERIC_OPTION_KEYS[event.key]
-            if 0 <= idx < len(possible_actions):
-                selected_index = idx
-                refresh_sidebar()
-                return possible_actions[selected_index]
-        return None
-
-    return _prompt_renderer_loop(env, renderer=renderer, on_keydown=on_event)
-
-
-def prompt_human_text(
-    renderer: "Pygame_Renderer",
-    env: Any,
-    *,
-    entity_name: str,
-    position_label: str,
-    header: str,
-    instructions: list[str],
-    initial_text: str = "",
-) -> str:
-    buffer = initial_text
-
-    def refresh_sidebar() -> None:
-        _set_human_prompt_sidebar(
-            env,
-            header=header,
-            entity_name=entity_name,
-            position_label=position_label,
-            instructions=instructions,
-            message_buffer=buffer,
-        )
-
-    refresh_sidebar()
-
-    def on_event(event):
-        nonlocal buffer
-        if event.type == pygame.TEXTINPUT:
-            buffer += event.text
-            refresh_sidebar()
-            return None
-        if event.type != pygame.KEYDOWN:
-            return None
-        if event.key == pygame.K_BACKSPACE:
-            buffer = buffer[:-1]
-            refresh_sidebar()
-            return None
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            return buffer
-        return None
-
-    return _prompt_renderer_loop(env, renderer=renderer, on_keydown=on_event, text_input=True)
-
-
-def prompt_human_multi_select(
-    renderer: "Pygame_Renderer",
-    env: Any,
-    *,
-    entity_name: str,
-    position_label: str,
-    header: str,
-    instructions: list[str],
-    options: list[tuple[int, str]],
-) -> str:
-    if not options:
-        return ""
-
-    cursor_index = 0
-    selected: set[int] = set()
-
-    def refresh_sidebar() -> None:
-        env.hud_sidebar_width = max(int(getattr(env, "hud_sidebar_width", 0) or 0), 420)
-        env.hud_sidebar_header = header
-        env.hud_sidebar_lines = [
-            f"You are {entity_name} at {position_label}.",
-            *instructions,
-        ]
-        env.hud_sidebar_selected_action = [
-            "Selected indices:",
-            ",".join(str(idx) for idx in sorted(selected, key=str)) if selected else "(none)",
-        ]
-        env.hud_sidebar_actions = ["Options:"]
-        for idx, (value, label) in enumerate(options):
-            cursor = ">" if idx == cursor_index else " "
-            mark = "[x]" if value in selected else "[ ]"
-            env.hud_sidebar_actions.append(f"{cursor} {mark} {value}: {label}")
-
-    refresh_sidebar()
-
-    def on_event(event):
-        nonlocal cursor_index
-        if event.type != pygame.KEYDOWN:
-            return None
-        if event.key == pygame.K_UP:
-            cursor_index = (cursor_index - 1) % len(options)
-            refresh_sidebar()
-            return None
-        if event.key == pygame.K_DOWN:
-            cursor_index = (cursor_index + 1) % len(options)
-            refresh_sidebar()
-            return None
-        if event.key == pygame.K_SPACE:
-            value, _ = options[cursor_index]
-            if value in selected:
-                selected.remove(value)
-            else:
-                selected.add(value)
-            refresh_sidebar()
-            return None
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            return ",".join(str(idx) for idx in sorted(selected, key=str))
-        return None
-
-    return _prompt_renderer_loop(env, renderer=renderer, on_keydown=on_event)
-
-
-def _renderer_kwargs_instructions(action_selection: Any, error_message: str | None) -> list[str]:
-    instructions = [
-        str(action_selection),
-        "Type the required values separated by ';'.",
-        "Press Enter to submit.",
+    env.hud_sidebar_width = max(int(getattr(env, "hud_sidebar_width", 0) or 0), 420)
+    env.hud_sidebar_header = agent.name
+    env.hud_sidebar_lines = [f"You are {agent.name} at {agent.position}."]
+    env.hud_sidebar_selected_action = ["Selected action:", "(waiting for input)"]
+    env.hud_sidebar_actions = [
+        "Available actions:",
+        *(f"[{idx}] {action}" for idx, action in enumerate(possible_actions)),
     ]
-    for name, arg in action_selection.required_kwargs.items():
-        instructions.append(
-            f"{name}: {arg.arg_description(action_selection.actor, action_selection.target_entity, action_selection.env)}",
-        )
-    if error_message:
-        instructions.append(f"Error: {error_message}")
-    return instructions
-
-
-def _prompt_human_action_kwargs_options(
-    renderer: "Pygame_Renderer",
-    action_selection: Any,
-    error_message: str | None,
-) -> str | None:
-    if not action_selection.required_kwargs or len(action_selection.required_kwargs) != 1:
-        return None
-
-    arg_name, arg = next(iter(action_selection.required_kwargs.items()))
-    options = arg.options(
-        action_selection.actor,
-        action_selection.target_entity,
-        action_selection.env,
-    )
-    if not options:
-        return None
-
-    return prompt_human_multi_select(
-        renderer,
-        action_selection.env,
-        entity_name=action_selection.actor.name,
-        position_label=str(action_selection.actor.position),
-        header="Action Arguments",
-        instructions=[
-            str(action_selection),
-            f"Choose values for: {arg_name}",
-            "Use Up/Down to move, Space to toggle, Enter to submit.",
-            *([f"Error: {error_message}"] if error_message else []),
-        ],
-        options=options,
-    )
-
-
-def _prompt_human_action_kwargs_text(
-    renderer: "Pygame_Renderer",
-    action_selection: Any,
-    error_message: str | None,
-) -> str:
-    options_text = _prompt_human_action_kwargs_options(renderer, action_selection, error_message)
-    if options_text is not None:
-        return options_text
-
-    return prompt_human_text(
-        renderer,
-        action_selection.env,
-        entity_name=action_selection.actor.name,
-        position_label=str(action_selection.actor.position),
-        header="Action Arguments",
-        instructions=_renderer_kwargs_instructions(action_selection, error_message),
-    )
-
-
-def prompt_human_action_kwargs(
-    renderer: "Pygame_Renderer",
-    action_selection: Any,
-    *,
-    max_attempts: int = 10,
-) -> dict:
-    error_message = None
-    for _ in range(max_attempts):
-        text = _prompt_human_action_kwargs_text(renderer, action_selection, error_message)
-        try:
-            return action_selection.parse_and_validate_kwarg_list(text)
-        except Exception as exc:
-            error_message = str(exc)
-
-    raise RuntimeError("Too many invalid attempts entering arguments.")
+    if len(env.hud_sidebar_actions) == 1:
+        env.hud_sidebar_actions.append("(no actions available)")
 
 
 def render_step(
@@ -551,6 +241,7 @@ def render_step(
 
     if hasattr(env, "__dict__"):
         env.renderer_impl = rend
+    _sync_sidebar_from_observation(env, sidebar_agent_id)
 
     if not rend._pygame_initialized:
         init_pygame_if_needed(rend)

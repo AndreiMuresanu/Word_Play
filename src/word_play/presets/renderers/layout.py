@@ -11,30 +11,6 @@ from word_play.presets.systems import Inventory
 from .renderer import Renderable
 from .wall_geometry import infer_enclosed_floor_positions
 
-try:
-    from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-except ImportError:
-    Continuous_Position_2D = None
-
-try:
-    from word_play.presets.movement.graph import Graph_Position
-except ImportError:
-    Graph_Position = None
-
-try:
-    from word_play.presets.systems import Container
-except ImportError:
-    Container = None
-
-try:
-    from word_play.presets.systems import Crafter
-except ImportError:
-    Crafter = None
-
-try:
-    from word_play.presets.systems import Single_Item_Holder
-except ImportError:
-    Single_Item_Holder = None
 
 def _inventory_items(inventory: Any) -> list[Any]:
     """Return items from either the legacy inventory list or newer contents list."""
@@ -51,33 +27,6 @@ def _is_in_any_inventory(item, env) -> bool:
         if inventory and item in _inventory_items(inventory):
             return True
     return False
-
-
-def _is_in_closed_container(item, env) -> bool:
-    """Check if item is in a hidden/closed container."""
-    if Container is None:
-        return False
-    for entity in env.state.entities:
-        container = entity.get_component(Container)
-        if container and item in _inventory_items(container):
-            if container.visibility == "hidden" and not container.is_open:
-                return True
-    return False
-
-
-def _expire_render_messages(env) -> None:
-    """Clear transient speech bubbles after they have been visible for one step."""
-    current_step = getattr(env, "cur_step", 0)
-    for entity in getattr(getattr(env, "state", None), "entities", []):
-        if not hasattr(entity, "get_component"):
-            continue
-        renderable = entity.get_component(Renderable)
-        if renderable is None:
-            continue
-        chat_step = getattr(renderable, "_last_chat_message_step", None)
-        if chat_step is not None and current_step > chat_step + 1:
-            renderable.last_chat_message = None
-            renderable._last_chat_message_step = None
 
 
 class Position_Layout_Adapter(ABC):
@@ -370,197 +319,7 @@ class SinglePointLayout(Position_Layout_Adapter):
         return (self.base_x, self.base_y)
 
 
-# Backward-compatible alias (deprecated, use SinglePointLayout)
 Circle_Layout_Adapter = SinglePointLayout
-
-
-class Graph_Layout_Adapter(Position_Layout_Adapter):
-    """Layout adapter for graph-based environments.
-
-    Renders nodes at their (x,y) coordinates with visible connections.
-    Supports different room types: start, hub, treasure, goal.
-    """
-
-    NODE_SIZE = 0.4
-    EDGE_COLOR = (60, 70, 80)
-
-    # Colors for different room types
-    ROOM_COLORS = {
-        "start": (100, 180, 100),    # Green - start room
-        "hub": (140, 140, 180),      # Blue-gray - hub
-        "treasure": (200, 180, 80),  # Gold - treasure room
-        "goal": (180, 100, 180),     # Purple - goal room
-        "default": (120, 140, 160), # Default blue-gray
-    }
-
-    def __init__(self):
-        self._graph_nodes: dict[str, Any] = {}
-        self._edge_tiles: list[dict[str, Any]] = []
-        self._node_tiles: list[dict[str, Any]] = []
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Extract graph nodes and edges from environment."""
-        self._graph_nodes = getattr(env, "graph_nodes", {})
-        self._build_graph_background()
-
-    def _build_graph_background(self) -> None:
-        """Build background tiles for graph edges and nodes."""
-        self._edge_tiles = []
-        self._node_tiles = []
-
-        # Build edges from node connections
-        drawn_edges: set[tuple[str, str]] = set()
-        for node_id, node in self._graph_nodes.items():
-            # Draw connections as edges
-            for connected_id in getattr(node, "connections", set()):
-                # Avoid drawing edges twice
-                edge_key = tuple(sorted([node_id, connected_id]))
-                if edge_key in drawn_edges:
-                    continue
-                drawn_edges.add(edge_key)
-
-                other = self._graph_nodes.get(connected_id)
-                if other:
-                    self._edge_tiles.extend(self._create_edge_tiles(node, other))
-
-            # Draw node itself with color based on room type
-            room_type = getattr(node, "room_type", "default")
-            node_color = self.ROOM_COLORS.get(room_type, self.ROOM_COLORS["default"])
-
-            self._node_tiles.append({
-                "x": node.x,
-                "y": node.y,
-                "kind": "floor",
-                "sprite": "src/world_tiles/misc/floor_directions.png",
-                "color": node_color,
-                "is_node": True,
-                "node_id": node_id,
-                "room_type": room_type,
-            })
-
-    def _create_edge_tiles(self, node_a: Any, node_b: Any) -> list[dict[str, Any]]:
-        """Create tiles to draw a line between two nodes."""
-        tiles = []
-        x1, y1 = node_a.x, node_a.y
-        x2, y2 = node_b.x, node_b.y
-
-        # Draw intermediate tiles along the edge
-        dx = x2 - x1
-        dy = y2 - y1
-        dist = (dx * dx + dy * dy) ** 0.5
-
-        if dist > 0:
-            steps = int(dist * 2)  # 2 tiles per unit distance
-            for i in range(steps + 1):
-                t = i / max(steps, 1)
-                x = x1 + dx * t
-                y = y1 + dy * t
-                tiles.append({
-                    "x": x,
-                    "y": y,
-                    "kind": "floor",
-                    "sprite": "src/world_tiles/misc/floor_directions.png",
-                    "color": self.EDGE_COLOR,
-                    "is_edge": True,
-                })
-        return tiles
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Return graph edges and nodes as background tiles."""
-        # Rebuild if nodes changed
-        current_nodes = getattr(env, "graph_nodes", {})
-        if current_nodes != self._graph_nodes:
-            self._graph_nodes = current_nodes
-            self._build_graph_background()
-        return self._edge_tiles + self._node_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert graph position to screen coordinates."""
-        if Graph_Position is not None and isinstance(position, Graph_Position):
-            node = self._graph_nodes.get(position.node_id)
-            if node:
-                return (float(node.x), float(node.y))
-            return (0.0, 0.0)
-        return super().screen_position(position)
-
-class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
-    """Adapter for continuous 2D positions (float coordinates) with camera support.
-
-    Also handles background tiles from environment with camera viewport clamping.
-    """
-
-    def __init__(self, viewport_width: int = 15, viewport_height: int = 15):
-        super().__init__()
-        self.camera_offset_x: float = 0
-        self.camera_offset_y: float = 0
-        self.viewport_width = viewport_width
-        self.viewport_height = viewport_height
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Update camera position based on player position."""
-        # Find the player/agent entity
-        player = getattr(env, "player", None)
-        if player is None and hasattr(env, "agents") and env.agents:
-            player = env.agents[0]
-
-        if player is not None and hasattr(player, "position"):
-            pos = player.position
-            if Continuous_Position_2D is not None and isinstance(pos, Continuous_Position_2D):
-                # Center camera on player: player_x - half_viewport
-                half_view = self.viewport_width / 2
-                target_camera = pos.x - half_view
-
-                # Clamp to world bounds
-                bounds_min_x = getattr(env, "bounds_min_x", 0)
-                bounds_max_x = getattr(env, "bounds_max_x", target_camera + self.viewport_width)
-                max_cam = max(bounds_min_x, bounds_max_x - self.viewport_width)
-
-                self.camera_offset_x = max(bounds_min_x, min(target_camera, max_cam))
-            else:
-                self.camera_offset_x = getattr(env, "camera_x", 0)
-        else:
-            self.camera_offset_x = getattr(env, "camera_x", 0)
-
-        self.camera_offset_y = getattr(env, "camera_offset_y", 0)
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Fetch background tiles from renderer and filter to visible viewport."""
-        renderer = getattr(env, "renderer_impl", None)
-        if renderer is None or not hasattr(renderer, "background_tiles"):
-            return []
-        all_tiles = renderer.background_tiles()
-
-        # Filter to visible viewport (camera area + margin)
-        margin = 2  # Extra tiles on each side for smooth scrolling
-        visible_tiles = []
-
-        for tile in all_tiles:
-            tx = float(tile.get("x", 0))
-            ty = float(tile.get("y", 0))
-
-            # Check if tile is within camera viewport (y check too)
-            if (self.camera_offset_x - margin <= tx <=
-                self.camera_offset_x + self.viewport_width + margin and
-                self.camera_offset_y - margin <= ty <=
-                self.camera_offset_y + self.viewport_height + margin):
-                # Apply camera transform to tile position (world -> screen)
-                visible_tiles.append({
-                    **tile,
-                    "x": tx - self.camera_offset_x,
-                    "y": ty - self.camera_offset_y,
-                })
-
-        return visible_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert continuous position to screen coordinates with camera offset."""
-        if Continuous_Position_2D is not None and isinstance(position, Continuous_Position_2D):
-            return (
-                float(position.x) - self.camera_offset_x,
-                float(position.y) - self.camera_offset_y,
-            )
-
-        return super().screen_position(position)
 
 
 _DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
@@ -608,18 +367,13 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
         return []
 
     def prepare_env(self, env: "Environment") -> None:
-        """Apply common renderer-side sync for inventories, holders, crafters, and containers."""
-        _expire_render_messages(env)
-
+        """Apply common renderer-side sync for inventory overlays and collectable visibility."""
         for entity in getattr(getattr(env, "state", None), "entities", []):
             renderable = entity.get_component(Renderable) if hasattr(entity, "get_component") else None
             if renderable is None:
                 continue
 
             inventory = entity.get_component(Inventory)
-            holder = entity.get_component(Single_Item_Holder) if Single_Item_Holder is not None else None
-            crafter = entity.get_component(Crafter) if Crafter is not None else None
-            container = entity.get_component(Container) if Container is not None else None
 
             if inventory is not None:
                 inventory_items = _inventory_items(inventory)
@@ -628,27 +382,8 @@ class Environment_Layout_Adapter(Grid_Layout_Adapter):
                 renderable.overlay_sprite = None if held_renderable is None else held_renderable.sprite_path
                 renderable.overlay_mode = "badge"
                 renderable.overlay_scale = 0.28
-            elif holder is not None and holder.stored_item is not None:
-                item_renderable = holder.stored_item.get_component(Renderable)
-                if item_renderable is not None:
-                    renderable.overlay_sprite = item_renderable.sprite_path
-                    renderable.overlay_mode = "center"
-                    renderable.overlay_scale = 0.75
-            elif crafter is not None:
-                if crafter.output_item is not None:
-                    # Output is ready - show the crafted item
-                    output_renderable = crafter.output_item.get_component(Renderable)
-                    if output_renderable is not None:
-                        renderable.overlay_sprite = output_renderable.sprite_path
-                        renderable.overlay_mode = "center"
-                        renderable.overlay_scale = 0.75
-                elif crafter.active_recipe is not None and crafter.remaining_steps is not None:
-                    # Crafting in progress - no overlay needed, just show in HUD
-                    renderable.overlay_sprite = None
-                else:
-                    renderable.overlay_sprite = None
             else:
                 renderable.overlay_sprite = None
 
             if "collectable" in entity.tags:
-                renderable.visible = not _is_in_any_inventory(entity, env) and not _is_in_closed_container(entity, env)
+                renderable.visible = not _is_in_any_inventory(entity, env)
