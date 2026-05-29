@@ -17,6 +17,7 @@ from copy import deepcopy
 from typing import Callable
 
 from word_play.core import Action, Action_Validation, Component, Entity, Environment, Action_Arg
+from word_play.presets.action_args import Dynamic_Choice_Arg
 from word_play.presets.action_validations import (
     Target_Has_Component,
     Target_Has_Tag,
@@ -39,8 +40,18 @@ class Target_Not_In_Inventory(Action_Validation):
         return True
 
 
-class Inventory_Item_Index_Arg(Action_Arg):
+def inventory_item_index_choices(actor: Entity, target_entity: Entity, env: Environment) -> set[int]:
+    inventory = actor.get_component(Inventory)
+    if inventory is None:
+        return set()
+    return set(range(len(inventory.contents)))
+
+
+class Inventory_Item_Index_Arg(Dynamic_Choice_Arg):
     """Argument for selecting an item from inventory by index."""
+
+    def __init__(self):
+        super().__init__(inventory_item_index_choices, int)
 
     def parse(self, input: str) -> int:
         return int(input)
