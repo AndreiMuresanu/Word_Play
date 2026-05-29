@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from word_play.core import Agent_Policy, Component, Entity
+from word_play.core import Agent_Policy, Entity
 from word_play.presets.entity_orderings import entity_definition_order
 from word_play.presets.environments.simple_2d_grid_world import Simple_2D_Grid_World
 from word_play.presets.models import LLM_MODEL_REGISTRY, OpenRouter_Model
@@ -19,27 +19,6 @@ from word_play.presets.systems.inventory import Inventory
 from word_play.utils import tilemap_to_entities
 
 
-class Trade_Goal(Component):
-    def __init__(self, title: str, wants: list[str], protect: list[str], plan: str):
-        super().__init__()
-        self.title = title
-        self.wants = wants
-        self.protect = protect
-        self.plan = plan
-        self.complete = False
-
-    def on_instantiation(self, env, seed) -> None:
-        self._update_complete()
-
-    def post_actions_step(self, env) -> None:
-        self._update_complete()
-
-    def _update_complete(self) -> None:
-        inventory = self.entity.get_component(Inventory)
-        item_names = {item.name for item in inventory.inventory} if inventory is not None else set()
-        self.complete = all(item_name in item_names for item_name in self.wants)
-
-
 def run_exp(exp_steps: int):
     entity_tilemap = [
         [".", ".", "."],
@@ -54,14 +33,10 @@ def run_exp(exp_steps: int):
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
-                        "You are Bob, a forest apothecary with the scarce Berry. "
-                        "On the first step, post a public trade offer. Offer Berry and maybe Herb, "
-                        "and request Bread plus Spice or a strong counteroffer. "
-                        "Your goal is complete when you have Bread and Spice. "
-                        "Alice can provide Bread or Apple. Cara can provide Spice or Cheese. "
-                        "After your public offer is active, choose Do nothing and let Alice or Cara accept it. "
-                        "During the negotiation, protect Berry unless the other trader offers at least one goal item. "
-                        "Change your offer across rounds instead of repeating the exact same deal."
+                        "You are Bob, a forest apothecary. You have Berry and Herb. "
+                        "You want Bread and Spice, and you dislike giving away Berry without getting one. "
+                        "First post Berry as a public offer for Bread plus Spice or a strong counteroffer. "
+                        "After posting, choose Do nothing and let Alice or Cara accept."
                     ),
                     use_chain_of_thought=False,
                     action_generation_config={"temperature": 0.25},
@@ -78,12 +53,6 @@ def run_exp(exp_steps: int):
                 ),
                 Money(amount=1),
                 Public_Trade_Offer(),
-                Trade_Goal(
-                    title="Mix a spiced traveling remedy",
-                    wants=["Bread", "Spice"],
-                    protect=["Bread", "Spice", "Berry"],
-                    plan="Post Berry publicly, then negotiate with whichever trader accepts first.",
-                ),
             ],
         },
         "A": {
@@ -93,12 +62,10 @@ def run_exp(exp_steps: int):
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
-                        "You are Alice, a village baker. "
-                        "Your goal is complete when you have Berry and Cheese. "
-                        "Bob should post a public offer for Berry. If Bob's public offer is visible, "
-                        "accept it and counter with Bread first, then add Apple or up to 1 gold if needed. "
-                        "Do nothing only when no public offer is available or your goal is already complete. "
-                        "During negotiation, say exactly what you changed in the deal."
+                        "You are Alice, a village baker. You have Bread, Apple, and gold. "
+                        "You want Berry and Cheese, and you prefer to keep them once you have them. "
+                        "If Bob posts Berry publicly, accept and offer Bread; add Apple or 1 gold if needed. "
+                        "Otherwise choose Do nothing. In chat, say what changed in your offer."
                     ),
                     use_chain_of_thought=False,
                     action_generation_config={"temperature": 0.25},
@@ -114,12 +81,6 @@ def run_exp(exp_steps: int):
                     ],
                 ),
                 Money(amount=3),
-                Trade_Goal(
-                    title="Bake a berry-cheese tart",
-                    wants=["Berry", "Cheese"],
-                    protect=["Berry", "Cheese"],
-                    plan="Bid for Bob's public Berry offer with Bread, then add Apple or gold if needed.",
-                ),
             ],
         },
         "C": {
@@ -129,12 +90,10 @@ def run_exp(exp_steps: int):
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
-                        "You are Cara, a festival cook. "
-                        "Your goal is complete when you have Berry and Apple. "
-                        "Bob should post a public offer for Berry. If Bob's public offer is visible, "
-                        "accept it and counter with Spice first, then add Cheese or up to 1 gold if needed. "
-                        "Do nothing only when no public offer is available or your goal is already complete. "
-                        "During negotiation, say exactly what you changed in the deal."
+                        "You are Cara, a festival cook. You have Spice, Cheese, and gold. "
+                        "You want Berry and Apple, and you value Spice. "
+                        "If Bob posts Berry publicly, accept and offer Spice; add Cheese or 1 gold if needed. "
+                        "Otherwise choose Do nothing. In chat, say what changed in your offer."
                     ),
                     use_chain_of_thought=False,
                     action_generation_config={"temperature": 0.25},
@@ -150,12 +109,6 @@ def run_exp(exp_steps: int):
                     ],
                 ),
                 Money(amount=2),
-                Trade_Goal(
-                    title="Prepare a berry fruit plate",
-                    wants=["Berry", "Apple"],
-                    protect=["Berry", "Apple", "Spice"],
-                    plan="Bid for Bob's public Berry offer with Spice, then add Cheese or gold if needed.",
-                ),
             ],
         },
     }

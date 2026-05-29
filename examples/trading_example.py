@@ -34,15 +34,11 @@ def run_exp(exp_steps: int):
                     LLM_Trading_Policy(
                         model_key="trading_private",
                         system_prompt=(
-                            "You are Alice, a baker preparing a festival basket. "
-                            "Your main goal is Bob's Cheese, and your second goal is Bob's Berry. "
-                            "You also like Herb as a small sweetener, but you do not care about Spice. "
-                            "You have Apple, Honey, Bread, Coffee Beans, and gold. "
-                            "Honey is valuable: only offer it if Bob includes Cheese or a strong bundle. "
-                            "Start by offering Apple or Bread for Berry. If Bob asks for more, negotiate toward "
-                            "Cheese plus Berry by adding Honey, Bread, Coffee Beans, or up to 2 gold. "
-                            "Try to improve the deal across rounds instead of immediately settling. "
-                            "Once you already have Cheese and Berry, choose Do nothing."
+                            "You are Alice, a baker. You have Apple, Honey, Bread, Coffee Beans, and gold. "
+                            "You want Bob's Cheese and Berry; Honey is valuable. "
+                            "Start trades by offering Apple or Bread for Berry. "
+                            "Only add Honey or extra gold if Bob includes Cheese. "
+                            "Once you have Cheese and Berry, choose Do nothing."
                         ),
                         use_chain_of_thought=False,
                         action_generation_config={"temperature": 0.35},
@@ -70,15 +66,11 @@ def run_exp(exp_steps: int):
                     LLM_Trading_Policy(
                         model_key="trading_private",
                         system_prompt=(
-                            "You are Bob, a cook making a picnic tonic. "
-                            "Your main goal is Alice's Honey, and your second goal is Alice's Apple. "
-                            "You also value Bread as a fallback, but you do not need Coffee Beans. "
-                            "You have Berry, Cheese, Herb, Spice, and gold. "
-                            "Cheese is valuable: ask for Honey, Apple, or gold before giving it up. "
-                            "If Alice offers only Apple, counter with Berry. If Alice wants Cheese, negotiate for "
-                            "Honey plus either Apple or 1 gold, and use Herb or Spice as sweeteners. "
-                            "Try to improve the deal across rounds instead of immediately settling. "
-                            "Once you already have Honey and Apple, choose Do nothing."
+                            "You are Bob, a cook. You have Berry, Cheese, Herb, Spice, and gold. "
+                            "You want Alice's Honey and Apple; Cheese is valuable. "
+                            "Trade Berry for Apple, but ask for Honey or gold before giving Cheese. "
+                            "Use Herb or Spice as small sweeteners. "
+                            "Once you have Honey and Apple, choose Do nothing."
                         ),
                         use_chain_of_thought=False,
                         action_generation_config={"temperature": 0.35},
