@@ -97,3 +97,10 @@ class Inventory(Component):
             item.tags.remove("in_inventory")
 
         self.inventory = []
+
+
+def inventory_items(entity: Entity) -> list[Entity]:
+    inventory = entity.get_component(Inventory)
+    if inventory is None:
+        return []
+    return list(inventory.inventory)
