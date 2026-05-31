@@ -1,6 +1,10 @@
 # word_play
 A package for creating text-based environments.
 
+# Beta Disclaimer
+
+Word Play is currently in public beta. The framework is stable, however, we are still collecting feedback from the community and do not yet commit to long-term backwards compatability until the full release. Please let me us know if you run into any issues, we are happy to help.
+
 # Quick Start
 
 ## Simple Example
