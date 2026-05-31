@@ -67,32 +67,10 @@ class Test_Action(Action):
         return "Test Action."
 
 
-class Batch_Debug_Model(Model):
-    def generate_chat(
-        self,
-        messages: Sequence[Chat_Message | Mapping[str, Any]],
-        generation_config: Mapping[str, Any] | None = None,
-        max_new_tokens: int | None = None,
-    ) -> str:
-        print(f"THREADED REQUEST: {threading.current_thread().name}")
-        time.sleep(0.05)
-        return '{"action_choice_idx": 1}'
 
-
-def _agent_policy(batch_debug: bool):
-    if batch_debug:
-        return LLM_Action_And_Communication_Policy(model_key="batch-debug")
-    return Human_Takes_Action()
-
-
-def _register_batch_debug_model() -> None:
-    LLM_MODEL_REGISTRY.unload("batch-debug")
-    LLM_MODEL_REGISTRY.register("batch-debug", Batch_Debug_Model)
 
 
 def run_exp(exp_steps: int = 1000, batch_debug: bool = False):
-    if batch_debug:
-        _register_batch_debug_model()
 
     entity_tilemap = """
     WWWWWWWW...
@@ -121,7 +99,7 @@ def run_exp(exp_steps: int = 1000, batch_debug: bool = False):
                 Start_Private_Conversation(),
             ],
             "components": [
-                _agent_policy(batch_debug),
+                Human_Takes_Action(),
                 Inventory(
                     collectable_tags=["item"],
                     inventory_size=2,
@@ -146,7 +124,7 @@ def run_exp(exp_steps: int = 1000, batch_debug: bool = False):
                 Start_Private_Conversation(),
             ],
             "components": [
-                _agent_policy(batch_debug),
+                Human_Takes_Action(),
                 Inventory(
                     collectable_tags=["item"],
                     inventory_size=2,
@@ -205,22 +183,15 @@ def run_exp(exp_steps: int = 1000, batch_debug: bool = False):
     )
 
     for step in range(exp_steps):
-        cur_step_actions = build_policy_step_actions(
-            env,
-            batched=True,
-            on_selection=lambda env, observation, agent_id, action, info: print(
-                f"[step {step}] {env.agents[agent_id].name} -> {action}"
-            ),
-        )
+        cur_step_actions = []
+        for agent_id, agent in enumerate(env.agents):
+            observation = env.observe(agent_id)
+            action, info = agent.get_component(Agent_Policy).select_action(observation)
+            print(f"[step {step}] {agent.name} -> {action}")
+            cur_step_actions.append(action)
 
         env.step(cur_step_actions)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the two-agent simple env.")
-    parser.add_argument("--steps", type=int, default=None)
-    parser.add_argument("--batch-debug", action="store_true")
-    args = parser.parse_args()
-
-    default_steps = 3 if args.batch_debug else 1000
-    run_exp(exp_steps=args.steps or default_steps, batch_debug=args.batch_debug)
+    run_exp()
