@@ -19,18 +19,6 @@ def nearby_conversation_partners(actor: Entity, env: Environment) -> list[Entity
     ]
 
 
-def record_chat_message(speaker: Entity, message: str | None, env: Environment) -> None:
-    if message is None:
-        return
-    text = str(message)
-    for component in speaker.components.values():
-        if hasattr(component, "last_chat_message"):
-            component.last_chat_message = text
-            if hasattr(component, "_last_chat_message_step"):
-                component._last_chat_message_step = getattr(env, "cur_step", 0)
-            return
-
-
 # TODO: could add a turn order arg which takes as input an ordering func or a str keyword. Just need to be careful to
 #       make sure that the same entity doesn't send a message twice in a row.
 def sim_simple_conversation(participants: list[Entity], env: Environment, conversation_duration: int = 3) -> None:
@@ -41,7 +29,6 @@ def sim_simple_conversation(participants: list[Entity], env: Environment, conver
         for speaker in participants:
             recipients = [entity for entity in participants if entity is not speaker]
             message = speaker.get_component(Communication_Policy).send_message(recipients, env)
-            record_chat_message(speaker, message, env)
             for recipient in recipients:
                 recipient.get_component(Communication_Policy).receive_message(message, speaker, env)
 

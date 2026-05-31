@@ -1,30 +1,25 @@
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
+
+import pygame
 
 from word_play.core import Component
 
+from .draw import render_environment
+from .layout import Grid_Layout_Adapter
+from .runtime import configure_renderer, init_pygame_if_needed
+
 if TYPE_CHECKING:
     from word_play.core import Environment
+
     from .layout import Position_Layout_Adapter
-
-
-@dataclass
-class LLMConfig:
-    """Configuration for LLM mode."""
-    model_name: str = "openai/gpt-4o"
-    model_key: str = "default_model"
-    base_url: str = "https://openrouter.ai/api/v1"
-    policy_builder: Any = None
-    sidebar_width: int | None = None
 
 
 class Renderable(Component):
     """Store sprite and overlay metadata for an entity."""
-    hide_from_observation = True
-
     def __init__(
         self,
         sprite_path: str,
@@ -33,17 +28,7 @@ class Renderable(Component):
         overlay_sprite: str | None = None,
         overlay_mode: str = "badge",
         overlay_scale: float | None = None,
-        foreground_sprite: str | None = None,
-        foreground_scale: float | None = None,
-        shadow_scale: float = 0.72,
-        bob_amplitude: float = 0.0,
-        bob_speed: float = 1.6,
-        animation_frames: list[str] | None = None,
-        animation_fps: float = 5.0,
-        emissive_sprite: str | None = None,
-        emissive_intensity: int = 84,
-        last_chat_message: str | None = None,
-        speech_bubble_scale: float = 1.0,  # Scale factor for speech bubbles (0.5 = half size)
+        last_message: str | None = None,
         wall_set: str | None = None,
     ):
         super().__init__()
@@ -54,18 +39,7 @@ class Renderable(Component):
         self.overlay_sprite = overlay_sprite
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
-        self.foreground_sprite = foreground_sprite
-        self.foreground_scale = foreground_scale
-        self.shadow_scale = shadow_scale
-        self.bob_amplitude = bob_amplitude
-        self.bob_speed = bob_speed
-        self.animation_frames = list(animation_frames or [])
-        self.animation_fps = animation_fps
-        self.emissive_sprite = emissive_sprite
-        self.emissive_intensity = emissive_intensity
-        self.last_chat_message = last_chat_message
-        self._last_chat_message_step: int | None = None
-        self.speech_bubble_scale = speech_bubble_scale
+        self.last_message = last_message
 
 
 class Renderer(ABC):
@@ -80,17 +54,15 @@ class Pygame_Renderer(Renderer):
         self,
         layout: "Position_Layout_Adapter",
         tile_size: int = 32,
-        draw_grid_overlay: bool = False,
         width: int = 10,
         height: int = 10,
         default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
     ):
         """Configure renderer state, layout mapping, and sizing defaults."""
-        runtime_module.configure_renderer(
+        configure_renderer(
             self,
             layout=layout,
             tile_size=tile_size,
-            draw_grid_overlay=draw_grid_overlay,
         )
         self.width = width
         self.height = height
@@ -115,9 +87,45 @@ class Pygame_Renderer(Renderer):
 
     def render(self, env: "Environment") -> None:
         """Initialize pygame if needed and draw the current environment."""
-        runtime_module.init_pygame_if_needed(self)
-        draw_module.render_environment(self, env)
+        init_pygame_if_needed(self)
+        render_environment(self, env)
 
 
-from . import draw as draw_module
-from . import runtime as runtime_module
+_default_renderer: Pygame_Renderer | None = None
+
+
+def render_step(
+    env,
+    *,
+    renderer: Pygame_Renderer | None = None,
+    step_delay: float = 0.0,
+) -> bool:
+    """Render one pygame frame and return False when the window should close."""
+    global _default_renderer
+
+    rend = renderer or _default_renderer
+    if rend is None:
+        rend = Pygame_Renderer(layout=Grid_Layout_Adapter(), tile_size=56)
+        _default_renderer = rend
+
+    init_pygame_if_needed(rend)
+    render_environment(rend, env)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            if rend is _default_renderer:
+                _default_renderer = None
+            return False
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            pygame.quit()
+            if rend is _default_renderer:
+                _default_renderer = None
+            return False
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_r and hasattr(env, "reset"):
+            env.reset()
+
+    if step_delay > 0:
+        time.sleep(step_delay)
+
+    return True

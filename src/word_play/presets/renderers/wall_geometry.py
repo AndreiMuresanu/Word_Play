@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -62,76 +61,6 @@ def collect_wall_positions(background_items: list[dict[str, Any]]) -> set[tuple[
     }
 
 
-def infer_enclosed_floor_positions(
-    wall_positions: set[tuple[int, int]],
-    occupied_positions: set[tuple[int, int]] | None = None,
-) -> set[tuple[int, int]]:
-    """Infer enclosed non-wall cells using a boundary flood fill over a finite grid.
-
-    The finite grid is defined by the bounding box of all known occupied positions
-    (falling back to walls when no additional occupied positions are provided).
-    Non-wall boundary-reachable cells are marked outside; remaining non-wall cells
-    are considered interior floor.
-    """
-    occupied_positions = set(occupied_positions or set())
-    bounds_positions = wall_positions | occupied_positions
-    if not bounds_positions:
-        return set()
-
-    xs = [x for x, _ in bounds_positions]
-    ys = [y for _, y in bounds_positions]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-
-    outside: set[tuple[int, int]] = set()
-    queue: deque[tuple[int, int]] = deque()
-
-    def maybe_enqueue(x: int, y: int) -> None:
-        pos = (x, y)
-        if pos in wall_positions or pos in outside:
-            return
-        outside.add(pos)
-        queue.append(pos)
-
-    for x in range(min_x, max_x + 1):
-        maybe_enqueue(x, min_y)
-        maybe_enqueue(x, max_y)
-    for y in range(min_y, max_y + 1):
-        maybe_enqueue(min_x, y)
-        maybe_enqueue(max_x, y)
-
-    while queue:
-        x, y = queue.popleft()
-        for nx, ny in ((x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)):
-            if min_x <= nx <= max_x and min_y <= ny <= max_y:
-                maybe_enqueue(nx, ny)
-
-    floors: set[tuple[int, int]] = set()
-    for x in range(min_x, max_x + 1):
-        for y in range(min_y, max_y + 1):
-            pos = (x, y)
-            if pos not in wall_positions and pos not in outside:
-                floors.add(pos)
-
-    return floors
-
-
-def screen_position_for_entity(
-    renderer: "Pygame_Renderer",
-    entity: "Entity",
-    *,
-    min_x: int,
-    max_y: int,
-) -> tuple[int, int] | None:
-    """Convert an entity position into its on-screen pixel location."""
-    position = getattr(entity, "position", None)
-    if position is None:
-        return None
-
-    x, y = renderer.layout.screen_position(position)
-    return screen_rect_for_tile(renderer, int(x), int(y), min_x, max_y)
-
-
 def wall_neighbor_mask(x: int, y: int, wall_positions: set[tuple[int, int]]) -> dict[str, bool]:
     """Report which neighboring wall tiles surround a wall cell."""
     return {
@@ -144,22 +73,6 @@ def wall_neighbor_mask(x: int, y: int, wall_positions: set[tuple[int, int]]) -> 
         "sw": (x - 1, y - 1) in wall_positions,
         "nw": (x - 1, y + 1) in wall_positions,
     }
-
-
-def wall_variant(neighbors: dict[str, bool]) -> str:
-    """Classify a wall tile shape from its cardinal connections."""
-    cardinal_count = sum(int(neighbors[key]) for key in ("n", "e", "s", "w"))
-    if cardinal_count == 4:
-        return "cross"
-    if cardinal_count == 3:
-        return "t_junction"
-    if cardinal_count == 2:
-        if (neighbors["n"] and neighbors["s"]) or (neighbors["e"] and neighbors["w"]):
-            return "straight"
-        return "corner"
-    if cardinal_count == 1:
-        return "end_cap"
-    return "pillar"
 
 
 def wall_connections(neighbors: dict[str, bool]) -> tuple[str, ...]:

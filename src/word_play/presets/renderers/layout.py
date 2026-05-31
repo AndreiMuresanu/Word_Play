@@ -1,30 +1,32 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 import math
-from typing import Any
+from abc import ABC, abstractmethod
+from typing import Any, TYPE_CHECKING
 
-from word_play.core import Environment, Position
+from word_play.core import Position
 from word_play.presets.movement.single_point import Single_Point_Position
-from word_play.presets.systems import Inventory
+from word_play.presets.systems.inventory import Inventory
 
-from .renderer import Renderable
-from .wall_geometry import infer_enclosed_floor_positions
+if TYPE_CHECKING:
+    from word_play.core import Environment
 
 
-def _inventory_items(inventory: Any) -> list[Any]:
-    """Return items from either the legacy inventory list or newer contents list."""
-    items = getattr(inventory, "contents", None)
-    if items is None:
-        items = getattr(inventory, "inventory", [])
-    return list(items or [])
+_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
+
+
+def _renderable_component(entity: Any) -> Any | None:
+    for component in getattr(entity, "components", {}).values():
+        if component.__class__.__name__ == "Renderable":
+            return component
+    return None
 
 
 def _is_in_any_inventory(item, env) -> bool:
     """Check if item is in any entity's inventory."""
     for entity in env.state.entities:
         inventory = entity.get_component(Inventory)
-        if inventory and item in _inventory_items(inventory):
+        if inventory and item in inventory.inventory:
             return True
     return False
 
@@ -47,7 +49,24 @@ class Position_Layout_Adapter(ABC):
 class Grid_Layout_Adapter(Position_Layout_Adapter):
     """Use entity x/y values directly as grid coordinates."""
     def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Return empty - backgrounds are handled by renderer."""
+        """Fetch background tiles from env, then renderer, or auto-generate floor."""
+        env_tiles = getattr(env, "background_tiles", None)
+        if env_tiles:
+            return list(env_tiles)
+
+        floor_sprite = getattr(env, "floor_sprite", None) or _DEFAULT_FLOOR
+        width = getattr(env, "width", 0)
+        height = getattr(env, "height", 0)
+        if width > 0 and height > 0:
+            return [
+                {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
+                for x in range(width)
+                for y in range(height)
+            ]
+
+        renderer = getattr(env, "renderer_impl", None)
+        if renderer is not None and hasattr(renderer, "background_tiles"):
+            return renderer.background_tiles()
         return []
 
     def screen_position(self, position: Position | Any) -> tuple[float, float]:
@@ -60,6 +79,27 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
         if hasattr(position, '__getitem__') and len(position) >= 2:
             return float(position[0]), float(position[1])
         return 0.0, 0.0
+
+    def prepare_env(self, env: "Environment") -> None:
+        """Apply common renderer-side sync for inventory overlays."""
+        for entity in getattr(getattr(env, "state", None), "entities", []):
+            renderable = _renderable_component(entity)
+            if renderable is None:
+                continue
+
+            inventory = entity.get_component(Inventory) if hasattr(entity, "get_component") else None
+
+            if inventory is not None:
+                held_item = inventory.inventory[0] if inventory.inventory else None
+                held_renderable = None if held_item is None else _renderable_component(held_item)
+                renderable.overlay_sprite = None if held_renderable is None else held_renderable.sprite_path
+                renderable.overlay_mode = "badge"
+                renderable.overlay_scale = 0.28
+            else:
+                renderable.overlay_sprite = None
+
+            if "collectable" in entity.tags:
+                renderable.visible = not _is_in_any_inventory(entity, env)
 
 
 def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:
@@ -317,73 +357,3 @@ class SinglePointLayout(Position_Layout_Adapter):
                 return (float(x), float(y))
 
         return (self.base_x, self.base_y)
-
-
-Circle_Layout_Adapter = SinglePointLayout
-
-
-_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
-
-
-class Environment_Layout_Adapter(Grid_Layout_Adapter):
-    """Grid layout that fetches background tiles from env or renderer."""
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Fetch background tiles from env.background_tiles, then renderer, or auto-generate floor."""
-        env_tiles = getattr(env, "background_tiles", None)
-        if env_tiles:
-            return list(env_tiles)
-        # Auto-generate floor from self.floor_sprite + width/height
-        floor_sprite = getattr(env, "floor_sprite", None) or _DEFAULT_FLOOR
-        w = getattr(env, "width", 0)
-        h = getattr(env, "height", 0)
-        if w > 0 and h > 0:
-            return [{"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                    for x in range(w) for y in range(h)]
-        wall_positions = {
-            (int(entity.position.x), int(entity.position.y))
-            for entity in getattr(getattr(env, "state", None), "entities", [])
-            if getattr(entity, "position", None) is not None
-            and "wall" in getattr(entity, "tags", [])
-            and hasattr(entity.position, "x")
-            and hasattr(entity.position, "y")
-        }
-        if wall_positions:
-            occupied_positions = {
-                (int(entity.position.x), int(entity.position.y))
-                for entity in getattr(getattr(env, "state", None), "entities", [])
-                if getattr(entity, "position", None) is not None
-                and hasattr(entity.position, "x")
-                and hasattr(entity.position, "y")
-            }
-            inferred_tiles = [
-                {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                for x, y in sorted(infer_enclosed_floor_positions(wall_positions, occupied_positions))
-            ]
-            if inferred_tiles:
-                return inferred_tiles
-        renderer = getattr(env, "renderer_impl", None)
-        if renderer is not None and hasattr(renderer, "background_tiles"):
-            return renderer.background_tiles()
-        return []
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Apply common renderer-side sync for inventory overlays and collectable visibility."""
-        for entity in getattr(getattr(env, "state", None), "entities", []):
-            renderable = entity.get_component(Renderable) if hasattr(entity, "get_component") else None
-            if renderable is None:
-                continue
-
-            inventory = entity.get_component(Inventory)
-
-            if inventory is not None:
-                inventory_items = _inventory_items(inventory)
-                held_item = inventory_items[0] if inventory_items else None
-                held_renderable = None if held_item is None else held_item.get_component(Renderable)
-                renderable.overlay_sprite = None if held_renderable is None else held_renderable.sprite_path
-                renderable.overlay_mode = "badge"
-                renderable.overlay_scale = 0.28
-            else:
-                renderable.overlay_sprite = None
-
-            if "collectable" in entity.tags:
-                renderable.visible = not _is_in_any_inventory(entity, env)

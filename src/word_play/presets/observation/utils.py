@@ -20,14 +20,8 @@ def component_data_attributes(comp):
     return {
         name: value
         for name, value in comp.__dict__.items()
-        if not name.startswith("__")
-        and not callable(value)
-        and name not in {"entity", "hide_from_observation"}
+        if not name.startswith("__") and not callable(value) and name != "entity"
     }
-
-
-def component_is_hidden_from_observation(comp) -> bool:
-    return bool(getattr(comp, "hide_from_observation", False))
 
 
 def entity_state_to_str_with_complete_info(entity: Entity) -> str:
@@ -39,8 +33,7 @@ def entity_state_to_str_with_complete_info(entity: Entity) -> str:
             "components": [
                 {"component type": ctype.__name__} | component_data_attributes(comp)
                 for ctype, comp in entity.components.items()
-                if not component_is_hidden_from_observation(comp)
-                and component_data_attributes(comp)
+                if component_data_attributes(comp)
             ],
         },
         sort_dicts=False,
@@ -57,9 +50,6 @@ def entity_state_to_str(entity: Entity) -> str:
         lines.append(f"tags: {entity.tags}")
 
     for ctype, comp in entity.components.items():
-        if component_is_hidden_from_observation(comp):
-            continue
-
         component_name = ctype.__name__
         component_data = component_data_attributes(comp)
         if not component_data:
