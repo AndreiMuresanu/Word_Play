@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from itertools import repeat
 from typing import TYPE_CHECKING, Any, Callable
 
 from word_play.core.components import Agent_Policy, Non_Agent_Policy
@@ -10,6 +11,19 @@ if TYPE_CHECKING:
 
 
 Policy_Selection_Callback = Callable[["Environment", Any, int, "Action_Selection", dict], None]
+
+
+def select_action(env: "Environment", agent_id: int, observation: "Observation") -> tuple["Action_Selection", dict]:
+    agent = env.agents[agent_id]
+    policy = agent.get_component(Agent_Policy)
+
+    if policy is not None:
+        selection, info = policy.select_action(observation)
+        return selection, dict(info or {})
+
+    policy = agent.get_component(Non_Agent_Policy)
+    selection = policy.select_action(possible_actions=env.possible_actions(agent), env=env)
+    return selection, {}
 
 
 def build_policy_step_actions(
@@ -26,14 +40,14 @@ def build_policy_step_actions(
     all actions are returned.
     """
     observations = [env.observe(agent_id) for agent_id in range(len(env.agents))]
-    jobs = [_build_policy_job(env, agent_id, observation) for agent_id, observation in enumerate(observations)]
+    agent_ids = list(range(len(env.agents)))
 
     if batched:
-        worker_count = max_workers or len(jobs)
+        worker_count = max_workers or len(agent_ids)
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            results = list(executor.map(_select_policy_job, jobs))
+            results = list(executor.map(select_action, repeat(env), agent_ids, observations))
     else:
-        results = [_select_policy_job(job) for job in jobs]
+        results = [select_action(env, agent_id, observations[agent_id]) for agent_id in agent_ids]
 
     selections: list[Action_Selection] = []
     for agent_id, (selection, info) in enumerate(results):
@@ -42,32 +56,3 @@ def build_policy_step_actions(
         selections.append(selection)
 
     return selections
-
-
-def _build_policy_job(env: "Environment", agent_id: int, observation: "Observation") -> tuple:
-    agent = env.agents[agent_id]
-    policy = agent.get_component(Agent_Policy)
-    if policy is not None:
-        return policy, observation
-
-    return agent.get_component(Non_Agent_Policy), env.possible_actions(agent), env
-
-
-def _select_policy_job(job: tuple) -> tuple["Action_Selection", dict]:
-    if isinstance(job[0], Agent_Policy):
-        return _select_agent_policy(job[0], job[1])
-
-    selection = job[0].select_action(possible_actions=job[1], env=job[2])
-    return selection, {}
-
-
-def _select_agent_policy(policy: Agent_Policy, observation: "Observation") -> tuple["Action_Selection", dict]:
-    selection, info = policy.select_action(observation)
-    info = dict(info or {})
-    _record_last_selection(policy, selection, info)
-    return selection, info
-
-
-def _record_last_selection(policy: Agent_Policy, selection: "Action_Selection", info: dict) -> None:
-    policy._last_action = selection
-    policy._last_info = {**info, "_last_action": selection}
