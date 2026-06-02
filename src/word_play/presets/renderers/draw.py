@@ -367,14 +367,12 @@ def draw_selected_entity_card(
             )
         )
     inventory_header_surface = body_font.render("Inventory:", True, (232, 208, 164)) if inventory_entries else None
-    inventory_icon_size = max(16, min(28, metrics["text_line_height"]))
-    inventory_item_rows = []
+    inventory_item_surfaces = []
     for entry in inventory_entries[:4]:
         item_name = str(entry.get("name", "Item"))
         item_count = int(entry.get("count", 0))
-        line = f"{item_name} x{item_count}" if item_count > 1 else item_name
-        text_surface = body_font.render(line, True, (189, 196, 206))
-        inventory_item_rows.append((str(entry.get("sprite") or ""), text_surface))
+        line = f"- {item_name} x{item_count}" if item_count > 1 else f"- {item_name}"
+        inventory_item_surfaces.append(body_font.render(line, True, (189, 196, 206)))
 
     portrait_size = metrics["portrait_size"]
     line_gap = metrics["line_gap"]
@@ -384,9 +382,8 @@ def draw_selected_entity_card(
         content_width = max(content_width, label_surface.get_width() + metrics["inner_gap"] + value_surface.get_width())
     if inventory_header_surface is not None:
         content_width = max(content_width, inventory_header_surface.get_width())
-    for sprite_name, item_surface in inventory_item_rows:
-        icon_width = inventory_icon_size + metrics["line_gap"] if sprite_name else 0
-        content_width = max(content_width, icon_width + item_surface.get_width())
+    for item_surface in inventory_item_surfaces:
+        content_width = max(content_width, item_surface.get_width())
 
     top_info_width = portrait_size + metrics["inner_gap"] + content_width
     card_width = top_info_width + metrics["outer_pad"] * 2
@@ -399,8 +396,8 @@ def draw_selected_entity_card(
     inventory_text_height = 0
     if inventory_header_surface is not None:
         inventory_text_height = metrics["inner_gap"] + inventory_header_surface.get_height()
-        if inventory_item_rows:
-            inventory_text_height += metrics["line_gap"] + len(inventory_item_rows) * metrics["text_line_height"]
+        if inventory_item_surfaces:
+            inventory_text_height += metrics["line_gap"] + len(inventory_item_surfaces) * metrics["text_line_height"]
     text_block_height = stats_height + inventory_text_height
     top_info_height = max(portrait_size, text_block_height)
     card_height = metrics["outer_pad"] * 2 + top_info_height
@@ -474,15 +471,8 @@ def draw_selected_entity_card(
         text_y += max(2, metrics["line_gap"])
         renderer.effect_surface.blit(inventory_header_surface, (text_left, text_y))
         text_y += metrics["text_line_height"]
-        for sprite_name, item_surface in inventory_item_rows:
-            item_text_x = text_left
-            if sprite_name:
-                item_image = get_scaled_image(renderer, sprite_name, inventory_icon_size, inventory_icon_size)
-                if item_image is not None:
-                    image_y = text_y + (metrics["text_line_height"] - item_image.get_height()) // 2
-                    renderer.effect_surface.blit(item_image, (text_left, image_y))
-                    item_text_x += inventory_icon_size + metrics["line_gap"]
-            renderer.effect_surface.blit(item_surface, (item_text_x, text_y))
+        for item_surface in inventory_item_surfaces:
+            renderer.effect_surface.blit(item_surface, (text_left, text_y))
             text_y += metrics["text_line_height"]
 
 
