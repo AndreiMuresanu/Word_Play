@@ -9,6 +9,7 @@ from typing import Any
 
 from word_play.core import Action_Selection, Environment, Observation
 
+from .layout import inferred_floor_tiles, is_in_any_inventory
 from .renderer import Renderable
 
 
@@ -76,6 +77,16 @@ def _json_safe(value: Any, _seen: set | None = None) -> Any:
         _seen.discard(obj_id)
 
 
+def _visible_render_message(renderable: Renderable, env: Environment) -> str | None:
+    message_step = getattr(renderable, "_last_message_step", None)
+    current_step = getattr(env, "cur_step", 0)
+    if message_step is not None and current_step > message_step:
+        renderable.last_message = None
+        renderable._last_message_step = None
+        return None
+    return getattr(renderable, "last_message", None)
+
+
 def serialize_action_selection(action_selection: Action_Selection, index: int | None = None) -> dict[str, Any]:
     payload = {
         "label": str(action_selection),
@@ -123,20 +134,7 @@ def capture_environment_frame(
                 for y in range(height)
             ]
         else:
-            xs = []
-            ys = []
-            for entity in getattr(getattr(env, "state", None), "entities", []):
-                x = getattr(getattr(entity, "position", None), "x", None)
-                y = getattr(getattr(entity, "position", None), "y", None)
-                if x is not None and y is not None:
-                    xs.append(int(x))
-                    ys.append(int(y))
-            if xs and ys:
-                background_tiles = [
-                    {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                    for x in range(min(xs), max(xs) + 1)
-                    for y in range(min(ys), max(ys) + 1)
-                ]
+            background_tiles = inferred_floor_tiles(env, floor_sprite)
 
     entities = []
     for entity in env.state.entities:
@@ -144,6 +142,7 @@ def capture_environment_frame(
         position = entity.position
         x = getattr(position, "x", None)
         y = getattr(position, "y", None)
+        visible = False if renderable is None else renderable.visible and not is_in_any_inventory(entity, env)
 
         entities.append(
             {
@@ -157,12 +156,12 @@ def capture_environment_frame(
                 else {
                     "sprite_path": renderable.sprite_path,
                     "z_index": renderable.z_index,
-                    "visible": renderable.visible,
+                    "visible": visible,
                     "overlay_sprite": getattr(renderable, "overlay_sprite", None),
                     "overlay_mode": getattr(renderable, "overlay_mode", "badge"),
                     "overlay_scale": getattr(renderable, "overlay_scale", None),
                     "wall_set": getattr(renderable, "wall_set", None),
-                    "last_message": getattr(renderable, "last_message", None),
+                    "last_message": _visible_render_message(renderable, env),
                 },
                 "components": {
                     component_type.__name__: _json_safe(component)
@@ -181,13 +180,17 @@ def capture_environment_frame(
             }
         )
 
+    cur_step = getattr(env, "cur_step", 0)
+
     return {
-        "tick": getattr(env, "tick", 0),
+        "cur_step": cur_step,
+        "tick": cur_step,
         "score": getattr(env, "score", None),
         "hud_sidebar_header": getattr(env, "hud_sidebar_header", None),
         "hud_sidebar_lines": list(getattr(env, "hud_sidebar_lines", [])),
         "hud_sidebar_selected_action": list(getattr(env, "hud_sidebar_selected_action", [])),
         "hud_sidebar_actions": list(getattr(env, "hud_sidebar_actions", [])),
+        "hud_sidebar_compact_observation": bool(getattr(env, "hud_sidebar_compact_observation", False)),
         "hud_sidebar_width": getattr(env, "hud_sidebar_width", None),
         "current_phase": getattr(env, "current_phase", None),
         "hide_bottom_hud": bool(getattr(env, "hide_bottom_hud", False)),
@@ -217,11 +220,13 @@ class ExperimentRecorder:
         env: Environment,
         selected_actions: list[Action_Selection] | None = None,
     ) -> dict[str, Any]:
+        env.renderer_recorder = self
         frame = capture_environment_frame(
             env,
             selected_actions=selected_actions,
         )
-        frame["frame_index"] = len(self.frames)
+        frame_index = len(self.frames)
+        frame["frame_index"] = frame_index
         self.frames.append(frame)
         self.flush()
         return frame

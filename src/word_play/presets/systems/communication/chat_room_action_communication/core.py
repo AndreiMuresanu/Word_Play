@@ -4,6 +4,7 @@ from typing import Callable
 
 from word_play.core import Action, Entity, Environment, Action_Validation, Target_Is_Self
 from word_play.presets.action_args import Int_Arg, List_Arg
+from word_play.presets.renderers.renderer import record_render_message
 from word_play.presets.systems.communication.core import Communication_Policy
 
 
@@ -29,6 +30,7 @@ def sim_simple_conversation(participants: list[Entity], env: Environment, conver
         for speaker in participants:
             recipients = [entity for entity in participants if entity is not speaker]
             message = speaker.get_component(Communication_Policy).send_message(recipients, env)
+            record_render_message(speaker, message, env)
             for recipient in recipients:
                 recipient.get_component(Communication_Policy).receive_message(message, speaker, env)
 

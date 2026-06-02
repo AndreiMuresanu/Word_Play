@@ -49,20 +49,34 @@ def focused_radius(env: "Environment", renderer: "Pygame_Renderer") -> int:
     return max(0, int(radius))
 
 
-def handle_entity_click(renderer: "Pygame_Renderer", env: "Environment", mouse_pos: tuple[int, int]) -> None:
+def handle_entity_click(
+    renderer: "Pygame_Renderer",
+    env: "Environment",
+    mouse_pos: tuple[int, int],
+    *,
+    button: int = 1,
+) -> None:
     for entity in getattr(getattr(env, "state", None), "entities", []):
+        if not getattr(entity, "is_agent", False):
+            continue
+
         rect = renderer._last_drawn_entity_rects.get(entity.name)
         if rect is None or not rect.collidepoint(mouse_pos):
             continue
 
-        renderer.selected_entity_name = None if entity.is_agent else entity.name
-        renderer.camera_focus_entity_name = entity.name if entity.is_agent else None
-        if renderer.camera_focus_entity_name is not None:
+        if button == 1:
+            renderer.selected_entity_name = entity.name
+            return
+
+        if button == 3:
+            renderer.camera_focus_entity_name = entity.name
             renderer.camera_focus_radius_tiles = focused_radius(env, renderer)
         return
 
-    renderer.selected_entity_name = None
-    renderer.camera_focus_entity_name = None
+    if button == 1:
+        renderer.selected_entity_name = None
+    elif button == 3:
+        renderer.camera_focus_entity_name = None
 
 
 def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
@@ -78,6 +92,7 @@ def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
     if getattr(renderer, "_pygame_initialized", False):
         renderer.font = pygame.font.SysFont(None, renderer.tile_size)
         renderer.small_font = pygame.font.SysFont(None, max(16, renderer.tile_size // 2))
+        renderer.sidebar_font = pygame.font.SysFont(None, max(13, int(renderer.tile_size * 0.32)))
         renderer.hud_font = pygame.font.SysFont(None, max(20, renderer.tile_size // 2 + 6))
         renderer.speech_fonts = [
             pygame.font.SysFont(None, max(13, renderer.tile_size // 3)),

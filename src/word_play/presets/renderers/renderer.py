@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import argparse
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, TYPE_CHECKING
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
 import pygame
 
@@ -40,6 +44,7 @@ class Renderable(Component):
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
         self.last_message = last_message
+        self._last_message_step: int | None = None
 
 
 class Renderer(ABC):
@@ -87,6 +92,7 @@ class Pygame_Renderer(Renderer):
 
     def render(self, env: "Environment") -> None:
         """Initialize pygame if needed and draw the current environment."""
+        env.renderer_impl = self
         init_pygame_if_needed(self)
         render_environment(self, env)
 
@@ -109,6 +115,7 @@ def render_step(
         _default_renderer = rend
 
     init_pygame_if_needed(rend)
+    env.renderer_impl = rend
     render_environment(rend, env)
 
     for event in pygame.event.get():
@@ -124,10 +131,89 @@ def render_step(
             return False
         if event.type == pygame.KEYDOWN and event.key == pygame.K_r and hasattr(env, "reset"):
             env.reset()
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            handle_entity_click(rend, env, event.pos)
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
+            handle_entity_click(rend, env, event.pos, button=event.button)
 
     if step_delay > 0:
         time.sleep(step_delay)
 
     return True
+
+
+def _record_transient_frame(env: "Environment") -> None:
+    recorder = getattr(env, "renderer_recorder", None)
+    if recorder is None or getattr(env, "_recording_renderer_message_frame", False):
+        return
+
+    env._recording_renderer_message_frame = True
+    try:
+        recorder.record(env)
+    finally:
+        env._recording_renderer_message_frame = False
+
+
+def _render_transient_frame(env: "Environment") -> None:
+    renderer = getattr(env, "renderer_impl", None)
+    if renderer is None:
+        return
+
+    init_pygame_if_needed(renderer)
+    render_environment(renderer, env)
+
+
+def record_render_message(
+    entity: Any,
+    message: str | None,
+    env: "Environment" | None = None,
+    *,
+    record_frame: bool = True,
+    render_frame: bool = True,
+) -> None:
+    if entity is None or message is None:
+        return
+
+    renderable = entity.get_component(Renderable)
+    if renderable is None:
+        return
+
+    renderable.last_message = str(message)
+    renderable._last_message_step = getattr(env, "cur_step", None) if env is not None else None
+    if env is not None and record_frame:
+        _record_transient_frame(env)
+    if env is not None and render_frame:
+        _render_transient_frame(env)
+
+
+from .replay_and_live import (
+    default_replay_renderer,
+    newest_replay_log_path,
+    replay,
+    ReplayFrameEnvironment,
+    replay_frames,
+    replay_log_path,
+)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Replay a recorded Word Play renderer log.")
+    parser.add_argument(
+        "log",
+        nargs="?",
+        default="simple_env_1",
+        help="Experiment name, like simple_env_1, or a direct .pkl path.",
+    )
+    parser.add_argument("--autoplay", action="store_true", help="Start replay playback immediately.")
+    parser.add_argument("--step-delay", type=float, default=0.28, help="Seconds between autoplay frames.")
+    parser.add_argument("--print-path", action="store_true", help="Print the resolved replay log path and exit.")
+    args = parser.parse_args(argv)
+
+    log_path = replay_log_path(args.log)
+    if args.print_path:
+        print(log_path)
+        return
+
+    replay(log_path, autoplay=args.autoplay, step_delay=args.step_delay)
+
+
+if __name__ == "__main__":
+    main()

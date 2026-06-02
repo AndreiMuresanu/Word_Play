@@ -122,7 +122,7 @@ def run_exp(exp_steps: int = 1000, *, render: bool = True, step_delay: float = 0
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
                 Human_Communication_Policy(),
-                Renderable(sprite_path="sprite_library/src/characters/humanoids/human/mage.png", z_index=10),
+                Renderable(sprite_path="sprite_library/src/characters/humanoids/human/ordinary_human.png", z_index=10),
             ],
         },
         "A": {
@@ -160,13 +160,13 @@ def run_exp(exp_steps: int = 1000, *, render: bool = True, step_delay: float = 0
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
                 Human_Communication_Policy(),
-                Renderable(sprite_path="sprite_library/src/characters/humanoids/human/warrior_n.png", z_index=10),
+                Renderable(sprite_path="sprite_library/src/characters/humanoids/human/ordinary_human_2.png", z_index=10),
             ],
         },
         "f": {
             "name": "Blue Flower",
             "tags": ["item"],
-            "components": [Renderable(sprite_path="sprite_library/src/items/materials/misc/blue_flowers.png", z_index=2)],
+            "components": [Renderable(sprite_path="sprite_library/src/characters/flora/plant/twoflower.png", z_index=2)],
         },
         "b": {
             "name": "Barrel",
@@ -208,14 +208,54 @@ def run_exp(exp_steps: int = 1000, *, render: bool = True, step_delay: float = 0
             "tags": ["item"],
             "components": [
                 Follow_Action_Sequence([(Attack, None)]),
-                Renderable(sprite_path="sprite_library/src/characters/monsters/misc/tiny_spikes.png", z_index=2),
+                Renderable(sprite_path="sprite_library/src/items/materials/misc/spikes.png", z_index=2),
             ],
         },
     }
 
     env = Simple_2D_Grid_World(
         description="The forbidden forest.",
-        entities=tilemap_to_entities(entity_tilemap, entity_tileset),
+        entities=tilemap_to_entities(entity_tilemap, entity_tileset) + [Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            Entity(
+                name="Fat Cow",
+                position=Position_2D(1, 0),
+                components=[
+                    Health(max_health=10, starting_health=10),
+                    TalkingCow(),
+                ],
+            ),
+            ],
         entity_order=randomize_agent_order,
         observation_radius=1,
     )

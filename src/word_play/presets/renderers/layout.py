@@ -22,13 +22,58 @@ def _renderable_component(entity: Any) -> Any | None:
     return None
 
 
-def _is_in_any_inventory(item, env) -> bool:
-    """Check if item is in any entity's inventory."""
+def is_in_any_inventory(item: Any, env: "Environment") -> bool:
+    """Check if an item is currently held by any entity."""
+    if "in_inventory" in getattr(item, "tags", []):
+        return True
     for entity in env.state.entities:
         inventory = entity.get_component(Inventory)
         if inventory and item in inventory.inventory:
             return True
     return False
+
+
+def _entity_grid_position(entity: Any) -> tuple[int, int] | None:
+    position = getattr(entity, "position", None)
+    x = getattr(position, "x", None)
+    y = getattr(position, "y", None)
+    if x is None or y is None:
+        return None
+    return int(x), int(y)
+
+
+def _wall_positions(env: "Environment") -> list[tuple[int, int]]:
+    positions = []
+    for entity in getattr(getattr(env, "state", None), "entities", []):
+        renderable = _renderable_component(entity)
+        if "wall" not in getattr(entity, "tags", []) and getattr(renderable, "wall_set", None) is None:
+            continue
+        position = _entity_grid_position(entity)
+        if position is not None:
+            positions.append(position)
+    return positions
+
+
+def inferred_floor_tiles(env: "Environment", floor_sprite: str) -> list[dict[str, Any]]:
+    positions = _wall_positions(env)
+    if not positions:
+        positions = [
+            position
+            for entity in getattr(getattr(env, "state", None), "entities", [])
+            if not is_in_any_inventory(entity, env)
+            for position in [_entity_grid_position(entity)]
+            if position is not None
+        ]
+    if not positions:
+        return []
+
+    xs = [position[0] for position in positions]
+    ys = [position[1] for position in positions]
+    return [
+        {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
+        for x in range(min(xs), max(xs) + 1)
+        for y in range(min(ys), max(ys) + 1)
+    ]
 
 
 class Position_Layout_Adapter(ABC):
@@ -64,20 +109,9 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
                 for y in range(height)
             ]
 
-        xs = []
-        ys = []
-        for entity in getattr(getattr(env, "state", None), "entities", []):
-            x = getattr(getattr(entity, "position", None), "x", None)
-            y = getattr(getattr(entity, "position", None), "y", None)
-            if x is not None and y is not None:
-                xs.append(int(x))
-                ys.append(int(y))
-        if xs and ys:
-            return [
-                {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                for x in range(min(xs), max(xs) + 1)
-                for y in range(min(ys), max(ys) + 1)
-            ]
+        inferred_tiles = inferred_floor_tiles(env, floor_sprite)
+        if inferred_tiles:
+            return inferred_tiles
 
         renderer = getattr(env, "renderer_impl", None)
         if renderer is not None and hasattr(renderer, "background_tiles"):
@@ -114,7 +148,7 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
                 renderable.overlay_sprite = None
 
             if "collectable" in entity.tags:
-                renderable.visible = not _is_in_any_inventory(entity, env)
+                renderable.visible = not is_in_any_inventory(entity, env)
 
 
 def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:

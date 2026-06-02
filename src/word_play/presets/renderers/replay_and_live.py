@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pickle
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pygame
 
@@ -12,19 +14,19 @@ from word_play.core.components import Component
 from word_play.presets.movement.simple_2d_grid import Position_2D
 
 from .draw import render_environment
-from .interactive_env import load_recording_payload
-from .renderer import Renderable
+from .layout import Grid_Layout_Adapter
 from .runtime import handle_entity_click, init_pygame_if_needed
-
-if TYPE_CHECKING:
-    from .renderer import Pygame_Renderer
 
 
 class ReplayFrameEnvironment:
     """Minimal environment wrapper around one serialized replay frame."""
 
     def __init__(self, frame: dict[str, Any]):
-        self.tick = frame.get("tick", 0)
+        self.cur_step = frame.get("cur_step")
+        if self.cur_step is None:
+            self.cur_step = frame.get("frame_index", frame.get("tick", 0))
+        self.tick = self.cur_step
+        self.is_replay = True
         self.score = frame.get("score", 0)
         self.hit_effects = list(frame.get("hit_effects", []))
         self.observation_radius = frame.get("observation_radius")
@@ -36,6 +38,7 @@ class ReplayFrameEnvironment:
         self.hud_sidebar_lines = list(frame.get("hud_sidebar_lines", []))
         self.hud_sidebar_selected_action = list(frame.get("hud_sidebar_selected_action", []))
         self.hud_sidebar_actions = list(frame.get("hud_sidebar_actions", []))
+        self.hud_sidebar_compact_observation = bool(frame.get("hud_sidebar_compact_observation", False))
         self.hud_sidebar_width = frame.get("hud_sidebar_width")
 
         self._background_tiles = list(frame.get("background_tiles", []))
@@ -139,8 +142,8 @@ def replay_frames(
             if event.type == pygame.QUIT:
                 pygame.quit()
                 return
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                handle_entity_click(renderer, replay_env, event.pos)
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
+                handle_entity_click(renderer, replay_env, event.pos, button=event.button)
                 continue
             if event.type != pygame.KEYDOWN:
                 continue
@@ -162,6 +165,9 @@ def replay_frames(
             elif event.key == pygame.K_END:
                 paused = True
                 viewing_index = len(frames) - 1
+            elif event.key == pygame.K_SPACE:
+                paused = not paused
+                last_advance = time.monotonic()
 
         if not paused and time.monotonic() - last_advance >= step_delay:
             if viewing_index >= len(frames) - 1:
@@ -173,18 +179,49 @@ def replay_frames(
         clock.tick(60)
 
 
+def default_replay_renderer() -> Pygame_Renderer:
+    return Pygame_Renderer(Grid_Layout_Adapter(), tile_size=56)
+
+
+def newest_replay_log_path(title: str, root_dir: str | Path | None = None) -> Path:
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_") or "experiment"
+    base_dir = Path(root_dir) if root_dir is not None else Path(__file__).resolve().parents[3] / "experiments" / "logs"
+    return base_dir / f"{slug}_newest.pkl"
+
+
+def replay_log_path(log_or_title: str | Path) -> Path:
+    path = Path(log_or_title)
+    if path.suffix == ".pkl" or path.exists():
+        return path
+    return newest_replay_log_path(str(log_or_title))
+
+
 def replay(
-    renderer: "Pygame_Renderer",
-    log_path: str | Path,
+    log_path: str | Path | Pygame_Renderer,
+    renderer_or_log_path: Pygame_Renderer | str | Path | None = None,
     *,
     autoplay: bool = False,
     step_delay: float = 0.28,
 ) -> None:
     """Load a recording file and replay it."""
-    payload = load_recording_payload(log_path)
+    if isinstance(log_path, Pygame_Renderer):
+        if renderer_or_log_path is None or isinstance(renderer_or_log_path, Pygame_Renderer):
+            raise TypeError("Use replay(log_path) or replay(renderer, log_path).")
+        renderer = log_path
+        resolved_log_path = renderer_or_log_path
+    else:
+        resolved_log_path = replay_log_path(log_path)
+        if renderer_or_log_path is not None and not isinstance(renderer_or_log_path, Pygame_Renderer):
+            raise TypeError("Use replay(log_path) or replay(log_path, renderer).")
+        renderer = renderer_or_log_path or default_replay_renderer()
+
+    payload = pickle.loads(Path(resolved_log_path).read_bytes())
     replay_frames(
         renderer,
         payload.get("frames", []),
         autoplay=autoplay,
         step_delay=step_delay,
     )
+
+
+from .renderer import Pygame_Renderer, Renderable
