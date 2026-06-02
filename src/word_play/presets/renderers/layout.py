@@ -100,6 +100,10 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
             return list(env_tiles)
 
         floor_sprite = getattr(env, "floor_sprite", None) or _DEFAULT_FLOOR
+        inferred_tiles = inferred_floor_tiles(env, floor_sprite)
+        if inferred_tiles:
+            return inferred_tiles
+
         width = getattr(env, "width", 0)
         height = getattr(env, "height", 0)
         if width > 0 and height > 0:
@@ -108,10 +112,6 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
                 for x in range(width)
                 for y in range(height)
             ]
-
-        inferred_tiles = inferred_floor_tiles(env, floor_sprite)
-        if inferred_tiles:
-            return inferred_tiles
 
         renderer = getattr(env, "renderer_impl", None)
         if renderer is not None and hasattr(renderer, "background_tiles"):

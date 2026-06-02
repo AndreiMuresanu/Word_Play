@@ -125,6 +125,9 @@ def capture_environment_frame(
     background_tiles = list(_env_bg) if _env_bg else []
     if not background_tiles:
         floor_sprite = getattr(env, "floor_sprite", None) or "src/world_tiles/indoors/floors/day_brick_floor_c.png"
+        background_tiles = inferred_floor_tiles(env, floor_sprite)
+
+    if not background_tiles:
         width = int(getattr(env, "width", 0) or 0)
         height = int(getattr(env, "height", 0) or 0)
         if width > 0 and height > 0:
@@ -133,8 +136,6 @@ def capture_environment_frame(
                 for x in range(width)
                 for y in range(height)
             ]
-        else:
-            background_tiles = inferred_floor_tiles(env, floor_sprite)
 
     entities = []
     for entity in env.state.entities:
