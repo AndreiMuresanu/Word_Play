@@ -2,11 +2,6 @@ from __future__ import annotations
 
 from word_play.core import Agent_Policy, Observation
 from word_play.core.actions import Action_Selection
-from word_play.presets.renderers.human_input import (
-    prompt_human_action,
-    prompt_human_action_kwargs,
-    renderer_for_observation,
-)
 
 
 class Human_Takes_Action(Agent_Policy):
@@ -14,16 +9,14 @@ class Human_Takes_Action(Agent_Policy):
     MAX_ATTEMPTS = 10
 
     def select_action(self, observation: Observation) -> tuple[Action_Selection, dict | None]:
-        renderer = renderer_for_observation(observation)
-        if renderer is None:
-            print("--------------------")
-            print(observation)
+        print("--------------------")
+        print(observation)
 
         for retry_count in range(self.MAX_ATTEMPTS):
-            action_selection = self._choose_action(observation, renderer=renderer)
+            action_selection = self._choose_action(observation)
 
             if action_selection.required_kwargs:
-                kwargs = self._get_action_kwargs(action_selection, renderer=renderer)
+                kwargs = self._get_action_kwargs(action_selection)
                 action_selection.action_kwargs = kwargs
 
             if action_selection.is_valid():
@@ -36,10 +29,7 @@ class Human_Takes_Action(Agent_Policy):
 
         return action_selection, None
 
-    def _choose_action(self, observation: Observation, renderer=None) -> Action_Selection:
-        if renderer is not None:
-            return prompt_human_action(renderer, observation, max_attempts=self.MAX_ATTEMPTS)
-
+    def _choose_action(self, observation: Observation) -> Action_Selection:
         for _ in range(self.MAX_ATTEMPTS):
             try:
                 idx = int(input("Input action index: "))
@@ -70,14 +60,7 @@ class Human_Takes_Action(Agent_Policy):
 
         return "\n".join(lines) + "\n> "
 
-    def _get_action_kwargs(self, action_selection: Action_Selection, renderer=None) -> dict:
-        if renderer is not None:
-            return prompt_human_action_kwargs(
-                renderer,
-                action_selection,
-                max_attempts=self.MAX_ATTEMPTS,
-            )
-
+    def _get_action_kwargs(self, action_selection: Action_Selection) -> dict:
         for _ in range(self.MAX_ATTEMPTS):
             try:
                 input_prompt = self._format_kwargs_prompt(action_selection)

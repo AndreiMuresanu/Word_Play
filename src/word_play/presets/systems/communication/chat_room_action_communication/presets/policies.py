@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 from word_play.core import Entity, Environment
-from word_play.presets.renderers.human_input import (
-    prompt_human_text,
-    renderer_for_env,
-)
 from word_play.presets.systems.communication.core import Communication_Policy
 
 
@@ -16,23 +12,11 @@ class Human_Communication_Policy(Communication_Policy):
             print(info)
 
     def send_message(self, recipients: list[Entity], env: Environment, info: str | None = None) -> str:
-        renderer = renderer_for_env(env)
-        if renderer is not None:
-            speaker_name = self.entity.name if self.entity is not None else "Human"
-            message = prompt_human_text(
-                renderer,
-                env,
-                header=f"{speaker_name} Chat",
-                lines=[
-                    f"Recipients: {', '.join(entity.name for entity in recipients) or 'nobody'}",
-                    *([str(info)] if info else []),
-                ],
-            )
-            return message
-
+        speaker_name = self.entity.name if self.entity is not None else "Human"
+        print(f"Recipients: {', '.join(entity.name for entity in recipients) or 'nobody'}")
         if info:
             print(info)
-        message = input("Your message: ")
+        message = input(f"{speaker_name} message: ")
         return message
 
     def receive_message(self, message: str, sender: Entity, env: Environment) -> None:

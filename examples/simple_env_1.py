@@ -24,8 +24,9 @@ from word_play.presets.movement.simple_2d_grid import (
     Position_2D,
 )
 from word_play.presets.renderers import (
+    Grid_Layout_Adapter,
+    Pygame_Renderer,
     Renderable,
-    render_step,
 )
 from word_play.presets.systems.combat import Attack
 from word_play.presets.systems.communication import (
@@ -66,6 +67,11 @@ class Test_Action(Action):
 
 def run_exp():
     exp_steps = 1000
+    renderer = Pygame_Renderer(
+        Grid_Layout_Adapter(),
+        tile_size=56,
+        default_floor_sprite="sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
+    )
     entity_tilemap = """
     WWWWWWWW...
     Wb.h...W...
@@ -216,12 +222,16 @@ def run_exp():
         entities=tilemap_to_entities(entity_tilemap, entity_tileset),
         entity_order=randomize_agent_order,
         observation_radius=1,
+        renderer=renderer,
     )
-    env.floor_sprite = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png"
 
     for step in range(exp_steps):
-        if not render_step(env):
+        render_result = env.render()
+        if render_result.quit_requested:
             break
+        if render_result.reset_requested:
+            env.reset()
+            continue
 
         cur_step_actions = []
         for agent_id, agent in enumerate(env.agents):

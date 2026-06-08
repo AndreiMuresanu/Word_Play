@@ -1,22 +1,35 @@
 from __future__ import annotations
 
-import pickle
 import re
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pygame
-
-from word_play.core import Entity
+from word_play.core import Entity, Renderer_State
 from word_play.core.components import Component
 from word_play.presets.movement.simple_2d_grid import Position_2D
 from word_play.presets.systems.inventory import Inventory
 
-from .draw import render_environment
-from .layout import Grid_Layout_Adapter
-from .runtime import handle_entity_click, init_pygame_if_needed
+from ..layout import Grid_Layout_Adapter
+from .interactive_env import load_recording_payload
+from .renderable import Renderable
+
+if TYPE_CHECKING:
+    from .renderer import Pygame_Renderer
+
+
+def _decode_render_payload(value: Any, entities: list[Entity]) -> Any:
+    if isinstance(value, dict):
+        if set(value.keys()) == {"__entity_ref__"}:
+            try:
+                return entities[int(value["__entity_ref__"])]
+            except (IndexError, TypeError, ValueError):
+                return None
+        return {key: _decode_render_payload(item, entities) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_decode_render_payload(item, entities) for item in value]
+    return value
 
 
 class ReplayFrameEnvironment:
@@ -27,36 +40,45 @@ class ReplayFrameEnvironment:
         if self.cur_step is None:
             self.cur_step = frame.get("frame_index", frame.get("tick", 0))
         self.tick = self.cur_step
-        self.is_replay = True
-        self.score = frame.get("score", 0)
-        self.hit_effects = list(frame.get("hit_effects", []))
-        self.observation_radius = frame.get("observation_radius")
-        self.current_phase = frame.get("current_phase")
-        self.hide_bottom_hud = bool(frame.get("hide_bottom_hud", False))
-        self.speech_bubbles = list(frame.get("speech_bubbles", []))
-
-        self.hud_sidebar_header = frame.get("hud_sidebar_header")
-        self.hud_sidebar_lines = list(frame.get("hud_sidebar_lines", []))
-        self.hud_sidebar_selected_action = list(frame.get("hud_sidebar_selected_action", []))
-        self.hud_sidebar_actions = list(frame.get("hud_sidebar_actions", []))
-        self.hud_sidebar_compact_observation = bool(frame.get("hud_sidebar_compact_observation", False))
-        self.hud_sidebar_width = frame.get("hud_sidebar_width")
-
-        self._background_tiles = list(frame.get("background_tiles", []))
-        self.state = SimpleNamespace(entities=self._build_entities(frame.get("entities", [])))
+        entities = self._build_entities(frame.get("entities", []))
+        renderer_state = Renderer_State(
+            values=_decode_render_payload(dict(frame.get("renderer_state_values") or {}), entities),
+            lists=_decode_render_payload(dict(frame.get("renderer_state_lists") or {}), entities),
+        )
+        self.state = SimpleNamespace(
+            entities=entities,
+            renderer_state=renderer_state,
+        )
         self.agents = [entity for entity in self.state.entities if getattr(entity, "is_agent", False)]
         self.player = self.agents[0] if self.agents else None
+        self.sync_renderer_state()
         self._fill_sidebar_from_frame(frame)
 
-    def _fill_sidebar_from_frame(self, frame: dict[str, Any]) -> None:
-        if not self.hud_sidebar_selected_action:
-            selected_actions = list(frame.get("selected_actions", []))
-            label = selected_actions[0]["label"] if selected_actions else "(no action chosen yet)"
-            self.hud_sidebar_selected_action = ["Chosen Action:", label]
+    def renderer_state(self) -> Renderer_State:
+        return self.state.renderer_state
 
-        if self.hud_sidebar_actions:
+    def sync_renderer_state(self) -> None:
+        self.set_render_value("simulation.step", self.cur_step)
+        self.set_render_value("simulation.is_replay", True)
+
+    def set_render_value(self, key: str, value: Any) -> None:
+        self.renderer_state().set_value(key, value)
+
+    def get_render_value(self, key: str, default: Any = None) -> Any:
+        return self.renderer_state().get_value(key, default)
+
+    def set_render_list(self, key: str, items: list[Any]) -> None:
+        self.renderer_state().set_list(key, items)
+
+    def get_render_list(self, key: str) -> list[Any]:
+        return self.renderer_state().get_list(key)
+
+    def _fill_sidebar_from_frame(self, frame: dict[str, Any]) -> None:
+        if self.get_render_value("ui.sidebar"):
             return
 
+        selected_actions = list(frame.get("selected_actions", []))
+        label = selected_actions[0]["label"] if selected_actions else "(no action chosen yet)"
         action_lines = ["Possible Actions:"]
         observations = list(frame.get("agent_observations", []))
         if observations:
@@ -66,7 +88,15 @@ class ReplayFrameEnvironment:
             )
         if len(action_lines) == 1:
             action_lines.append("(no actions available)")
-        self.hud_sidebar_actions = action_lines
+
+        self.set_render_value(
+            "ui.sidebar",
+            {
+                "header": "Agent View",
+                "selected_action": ["Chosen Action:", label],
+                "actions": action_lines,
+            },
+        )
 
     def _build_entities(self, entities: list[dict[str, Any]]) -> list[Entity]:
         built: list[Entity] = []
@@ -95,6 +125,7 @@ class ReplayFrameEnvironment:
                 components=components,
             )
             entity.is_agent = bool(entity_data.get("is_agent", False))
+            entity._replay_entity_index = int(entity_data.get("entity_index", len(built)))
             built.append(entity)
 
         return built
@@ -111,7 +142,6 @@ class ReplayFrameEnvironment:
             overlay_sprite=renderable_info.get("overlay_sprite"),
             overlay_mode=renderable_info.get("overlay_mode", "badge"),
             overlay_scale=renderable_info.get("overlay_scale"),
-            last_message=renderable_info.get("last_message"),
             wall_set=renderable_info.get("wall_set"),
         )
 
@@ -164,9 +194,18 @@ class ReplayFrameEnvironment:
                 return component_payload
         return {}
 
-    @property
-    def background_tiles(self) -> list[dict[str, Any]]:
-        return list(self._background_tiles)
+
+def _remap_replay_entity(entity: Entity | None, replay_env: ReplayFrameEnvironment) -> Entity | None:
+    if entity is None:
+        return None
+    target_index = getattr(entity, "_replay_entity_index", None)
+    if target_index is None:
+        return None
+    for candidate in replay_env.state.entities:
+        if getattr(candidate, "_replay_entity_index", None) == target_index:
+            return candidate
+    return None
+
 
 def replay_frames(
     renderer: "Pygame_Renderer",
@@ -176,6 +215,11 @@ def replay_frames(
     step_delay: float = 0.28,
 ) -> None:
     """Display serialized replay frames in pygame."""
+    import pygame
+
+    from .draw import render_environment
+    from .runtime import handle_entity_click, init_pygame_if_needed
+
     init_pygame_if_needed(renderer)
     if not frames:
         raise ValueError("Replay log is empty.")
@@ -184,10 +228,13 @@ def replay_frames(
     paused = not autoplay
     viewing_index = 0
     last_advance = time.monotonic()
-    renderer.camera_focus_entity_name = None
+    renderer.camera_focus_entity = None
+    renderer.selected_entity = None
 
     while True:
         replay_env = ReplayFrameEnvironment(dict(frames[viewing_index]))
+        renderer.selected_entity = _remap_replay_entity(renderer.selected_entity, replay_env)
+        renderer.camera_focus_entity = _remap_replay_entity(renderer.camera_focus_entity, replay_env)
         render_environment(renderer, replay_env)
 
         for event in pygame.event.get():
@@ -232,6 +279,8 @@ def replay_frames(
 
 
 def default_replay_renderer() -> Pygame_Renderer:
+    from .renderer import Pygame_Renderer
+
     return Pygame_Renderer(Grid_Layout_Adapter(), tile_size=56)
 
 
@@ -256,6 +305,8 @@ def replay(
     step_delay: float = 0.28,
 ) -> None:
     """Load a recording file and replay it."""
+    from .renderer import Pygame_Renderer
+
     if isinstance(log_path, Pygame_Renderer):
         if renderer_or_log_path is None or isinstance(renderer_or_log_path, Pygame_Renderer):
             raise TypeError("Use replay(log_path) or replay(renderer, log_path).")
@@ -267,13 +318,10 @@ def replay(
             raise TypeError("Use replay(log_path) or replay(log_path, renderer).")
         renderer = renderer_or_log_path or default_replay_renderer()
 
-    payload = pickle.loads(Path(resolved_log_path).read_bytes())
+    payload = load_recording_payload(resolved_log_path)
     replay_frames(
         renderer,
         payload.get("frames", []),
         autoplay=autoplay,
         step_delay=step_delay,
     )
-
-
-from .renderer import Pygame_Renderer, Renderable

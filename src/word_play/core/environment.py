@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable
 
 from .actions import Action_Selection, Target_Is_Nearby, Target_Is_Self, Target_Not_Self
 from .components import Non_Agent_Policy
 from .entity import Entity
 from .movement import Movement_System, Position
 from .observation import Observation
+from .rendering import Render_Result, Renderer, Renderer_State
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class Environment_State:
     """
 
     entities: list[Entity]
+    renderer_state: Renderer_State = field(default_factory=Renderer_State)
 
 
 # TODO: need to make agent_id more general then an int. This way we can make a general last() method which returns
@@ -52,6 +54,7 @@ class Environment(ABC):
         movement_system: Movement_System,
         reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
         entity_order: Callable[[list[Entity], Environment], list[int]],
+        renderer: Renderer | None = None,
     ) -> None:
         """
         entity_order defines how the ordering of state.entities is changed each step. The order of state.entities
@@ -63,13 +66,47 @@ class Environment(ABC):
               reordering rules. E.g., reordering based on an entity's initiative stat.
         """
         self.description = description
-        self.state = Environment_State(entities)
+        self.renderer = renderer
+        self.state = Environment_State(entities, renderer_state=self._create_renderer_state())
         self.cur_step = 0
         self.movement_system = movement_system
         self.reward_func = reward_func
         self.entity_order = entity_order
         self.reset()
         self.post_init()
+
+    def _create_renderer_state(self) -> Renderer_State:
+        if self.renderer is None:
+            return Renderer_State()
+        return self.renderer.create_renderer_state()
+
+    def renderer_state(self) -> Renderer_State:
+        return self.state.renderer_state
+
+    def sync_renderer_state(self) -> None:
+        """Publish core simulation data into the renderer-facing state."""
+        self.set_render_value("simulation.step", self.cur_step)
+
+    def set_render_value(self, key: str, value: Any) -> None:
+        self.renderer_state().set_value(key, value)
+
+    def get_render_value(self, key: str, default: Any = None) -> Any:
+        return self.renderer_state().get_value(key, default)
+
+    def set_render_list(self, key: str, items: Iterable[Any]) -> None:
+        self.renderer_state().set_list(key, items)
+
+    def get_render_list(self, key: str) -> list[Any]:
+        return self.renderer_state().get_list(key)
+
+    def append_render_item(self, key: str, item: Any) -> None:
+        self.renderer_state().append_to_list(key, item)
+
+    def extend_render_list(self, key: str, items: Iterable[Any]) -> None:
+        self.renderer_state().extend_list(key, items)
+
+    def clear_render_list(self, key: str) -> None:
+        self.renderer_state().clear_list(key)
 
     def post_init(self) -> None:
         """This method is called at the end of the __init__ method. It can be overwritten to provide more complex logic."""
@@ -108,14 +145,19 @@ class Environment(ABC):
         """This method is used by the reset() method to reset environment specific state."""
         pass
 
-    def render(self) -> None:
-        """This is for visualizing the environment. It is not required to be implemented."""
-        raise NotImplementedError("This environment does not support rendering.")
+    def render(self) -> Render_Result:
+        """Render via the environment's optional active renderer."""
+        if self.renderer is None:
+            raise NotImplementedError("This environment does not support rendering.")
+        self.sync_renderer_state()
+        return self.renderer.render(self)
 
     def reset(self, seed=None) -> None:
         self.cur_episode_seed = seed
         self._reset(seed=seed)
+        self.state.renderer_state = self._create_renderer_state()
         self.cur_step = 0
+        self.sync_renderer_state()
         self._init_agent_list()
         self._init_agent_idx_dict()
         self.last_rewards = [None] * len(self.agents)

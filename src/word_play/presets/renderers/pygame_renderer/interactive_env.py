@@ -7,10 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from word_play.core import Action_Selection, Environment, Observation
+from word_play.core import Action_Selection, Entity, Environment, Observation
+from word_play.presets.systems.inventory import Inventory
 
-from .layout import inferred_floor_tiles, is_in_any_inventory
-from .renderer import Renderable
+from .renderable import Renderable
 
 
 def default_experiment_log_path(
@@ -43,15 +43,30 @@ def newest_experiment_log_path(
     return base_dir / f"{slug}_newest.pkl"
 
 
-def _json_safe(value: Any, _seen: set | None = None) -> Any:
+def is_in_any_inventory(item: Any, env: Environment) -> bool:
+    """Check if an item is currently held by any entity."""
+    if "in_inventory" in getattr(item, "tags", []):
+        return True
+    for entity in env.state.entities:
+        inventory = entity.get_component(Inventory)
+        if inventory and item in inventory.inventory:
+            return True
+    return False
+
+
+def _json_safe(
+    value: Any,
+    entity_to_index: dict[Entity, int] | None = None,
+    _seen: set | None = None,
+) -> Any:
     if _seen is None:
         _seen = set()
 
-    # Handle primitives
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if entity_to_index is not None and isinstance(value, Entity) and value in entity_to_index:
+        return {"__entity_ref__": entity_to_index[value]}
 
-    # Guard against circular references
     obj_id = id(value)
     if obj_id in _seen:
         return "<circular reference>"
@@ -59,32 +74,23 @@ def _json_safe(value: Any, _seen: set | None = None) -> Any:
 
     try:
         if is_dataclass(value):
-            return {key: _json_safe(item, _seen) for key, item in asdict(value).items()}
+            return {key: _json_safe(item, entity_to_index, _seen) for key, item in asdict(value).items()}
         if isinstance(value, dict):
-            return {str(key): _json_safe(item, _seen) for key, item in value.items()}
+            return {str(key): _json_safe(item, entity_to_index, _seen) for key, item in value.items()}
         if isinstance(value, (list, tuple, set)):
-            return [_json_safe(item, _seen) for item in value]
+            return [_json_safe(item, entity_to_index, _seen) for item in value]
         if hasattr(value, "__dict__"):
             payload = {}
             for key, item in vars(value).items():
                 if key == "entity":
                     continue
-                payload[key] = _json_safe(item, _seen)
+                payload[key] = _json_safe(item, entity_to_index, _seen)
             if payload:
                 return payload
-            return str(value)
     finally:
         _seen.discard(obj_id)
 
-
-def _visible_render_message(renderable: Renderable, env: Environment) -> str | None:
-    message_step = getattr(renderable, "_last_message_step", None)
-    current_step = getattr(env, "cur_step", 0)
-    if message_step is not None and current_step > message_step:
-        renderable.last_message = None
-        renderable._last_message_step = None
-        return None
-    return getattr(renderable, "last_message", None)
+    return str(value)
 
 
 def serialize_action_selection(action_selection: Action_Selection, index: int | None = None) -> dict[str, Any]:
@@ -119,26 +125,10 @@ def capture_environment_frame(
     env: Environment,
     selected_actions: list[Action_Selection] | None = None,
 ) -> dict[str, Any]:
-    _env_bg = getattr(env, "background_tiles", None)
-    if callable(_env_bg):
-        _env_bg = _env_bg()
-    background_tiles = list(_env_bg) if _env_bg else []
-    if not background_tiles:
-        floor_sprite = getattr(env, "floor_sprite", None) or "src/world_tiles/indoors/floors/day_brick_floor_c.png"
-        background_tiles = inferred_floor_tiles(env, floor_sprite)
-
-    if not background_tiles:
-        width = int(getattr(env, "width", 0) or 0)
-        height = int(getattr(env, "height", 0) or 0)
-        if width > 0 and height > 0:
-            background_tiles = [
-                {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                for x in range(width)
-                for y in range(height)
-            ]
-
+    env.sync_renderer_state()
+    entity_to_index = {entity: index for index, entity in enumerate(env.state.entities)}
     entities = []
-    for entity in env.state.entities:
+    for entity_index, entity in enumerate(env.state.entities):
         renderable = entity.get_component(Renderable)
         position = entity.position
         x = getattr(position, "x", None)
@@ -147,6 +137,7 @@ def capture_environment_frame(
 
         entities.append(
             {
+                "entity_index": entity_index,
                 "name": entity.name,
                 "is_agent": entity.is_agent,
                 "x": x,
@@ -162,10 +153,9 @@ def capture_environment_frame(
                     "overlay_mode": getattr(renderable, "overlay_mode", "badge"),
                     "overlay_scale": getattr(renderable, "overlay_scale", None),
                     "wall_set": getattr(renderable, "wall_set", None),
-                    "last_message": _visible_render_message(renderable, env),
                 },
                 "components": {
-                    component_type.__name__: _json_safe(component)
+                    component_type.__name__: _json_safe(component, entity_to_index)
                     for component_type, component in entity.components.items()
                 },
             }
@@ -182,26 +172,16 @@ def capture_environment_frame(
         )
 
     cur_step = getattr(env, "cur_step", 0)
+    renderer_state = env.renderer_state()
 
     return {
         "cur_step": cur_step,
         "tick": cur_step,
-        "score": getattr(env, "score", None),
-        "hud_sidebar_header": getattr(env, "hud_sidebar_header", None),
-        "hud_sidebar_lines": list(getattr(env, "hud_sidebar_lines", [])),
-        "hud_sidebar_selected_action": list(getattr(env, "hud_sidebar_selected_action", [])),
-        "hud_sidebar_actions": list(getattr(env, "hud_sidebar_actions", [])),
-        "hud_sidebar_compact_observation": bool(getattr(env, "hud_sidebar_compact_observation", False)),
-        "hud_sidebar_width": getattr(env, "hud_sidebar_width", None),
-        "current_phase": getattr(env, "current_phase", None),
-        "hide_bottom_hud": bool(getattr(env, "hide_bottom_hud", False)),
-        "observation_radius": getattr(env, "observation_radius", None),
-        "speech_bubbles": _json_safe(list(getattr(env, "speech_bubbles", []))),
-        "hit_effects": _json_safe(list(getattr(env, "hit_effects", []))),
         "selected_actions": []
         if selected_actions is None
         else [serialize_action_selection(action_selection) for action_selection in selected_actions],
-        "background_tiles": background_tiles,
+        "renderer_state_values": _json_safe(dict(renderer_state.values), entity_to_index),
+        "renderer_state_lists": _json_safe(dict(renderer_state.lists), entity_to_index),
         "entities": entities,
         "agent_observations": agent_observations,
     }
@@ -221,7 +201,6 @@ class ExperimentRecorder:
         env: Environment,
         selected_actions: list[Action_Selection] | None = None,
     ) -> dict[str, Any]:
-        env.renderer_recorder = self
         frame = capture_environment_frame(
             env,
             selected_actions=selected_actions,
@@ -234,7 +213,7 @@ class ExperimentRecorder:
 
     def payload(self) -> dict[str, Any]:
         return {
-            "version": 1,
+            "version": 3,
             "title": self.title,
             "metadata": self.metadata,
             "frame_count": len(self.frames),
@@ -259,7 +238,7 @@ def record_step(
     metadata: dict[str, Any] | None = None,
     selected_actions: list[Action_Selection] | None = None,
 ) -> dict[str, Any]:
-    """Record one replay frame, mirroring the one-call style of render_step."""
+    """Record one replay frame."""
     global _default_recorder
 
     active_recorder = recorder or _default_recorder
@@ -275,5 +254,8 @@ def record_step(
 
 
 def load_recording_payload(log_path: str | Path) -> dict[str, Any]:
-    """Load a pickled replay payload from disk."""
-    return pickle.loads(Path(log_path).read_bytes())
+    """Load a pickled replay payload."""
+    payload = pickle.loads(Path(log_path).read_bytes())
+    if not isinstance(payload, dict):
+        raise TypeError("Replay payload must be a dictionary.")
+    return payload

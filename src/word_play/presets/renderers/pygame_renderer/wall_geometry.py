@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from word_play.core import Entity
 
-    from .renderer import Pygame_Renderer, Renderable
+    from .renderable import Renderable
+    from .renderer import Pygame_Renderer
 
 
 def normalize_background_item(item: Any) -> dict[str, Any]:
@@ -21,6 +22,7 @@ def normalize_background_item(item: Any) -> dict[str, Any]:
 
 def world_bounds(
     renderer: "Pygame_Renderer",
+    env: Any,
     background_items: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> tuple[int, int, int, int]:
@@ -34,7 +36,7 @@ def world_bounds(
 
     for _, entity, _ in renderables:
         try:
-            x, y = renderer.layout.screen_position(entity.position)
+            x, y = renderer.layout.screen_position(entity, env)
         except AttributeError:
             continue
         xs.append(int(x))

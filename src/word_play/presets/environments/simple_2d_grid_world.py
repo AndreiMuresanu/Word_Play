@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from word_play.core import Entity, Environment, Observation, Action_Selection
+from word_play.core import Entity, Environment, Observation, Action_Selection, Renderer
 from word_play.presets.environments.simple_env_reset_mixin import Simple_Env_Reset_Mixin
 from word_play.presets.entity_orderings import entity_definition_order
 from word_play.presets.movement.simple_2d_grid import INFINITE_2D_MOVEMENT_SYSTEM, Position_2D
@@ -18,6 +18,7 @@ class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
         entities: list[Entity],
         entity_order: Callable[[list[Entity], Environment], list[int]] = entity_definition_order,
         observation_radius: int = 0,
+        renderer: Renderer | None = None,
     ):
         self.observation_radius = observation_radius
         super().__init__(
@@ -26,6 +27,7 @@ class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
             movement_system=INFINITE_2D_MOVEMENT_SYSTEM,
             reward_func=zero_reward_func,
             entity_order=entity_order,
+            renderer=renderer,
         )
 
     def entities_in_observation_square(self, position: Position_2D) -> list[Entity]:
@@ -45,6 +47,10 @@ class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
             info=self.infos[agent_id],
             observation_radius=self.observation_radius,
         )
+
+    def sync_renderer_state(self) -> None:
+        super().sync_renderer_state()
+        self.set_render_value("camera.focus_radius", self.observation_radius)
 
     def environment_start_of_step(self, action_selections: list[Action_Selection]):
         pass

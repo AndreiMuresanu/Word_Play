@@ -7,7 +7,7 @@ import pygame
 if TYPE_CHECKING:
     from word_play.core import Environment
 
-    from .layout import Position_Layout_Adapter
+    from ..layout import Position_Layout_Adapter
     from .renderer import Pygame_Renderer
 
 
@@ -20,7 +20,6 @@ def configure_renderer(
     """Initialize renderer configuration, caches, and transient state."""
     renderer.layout = layout
     renderer.base_tile_size = tile_size
-    renderer.display_fit_tile_size = tile_size
     renderer.display_safe_margin = 72
     apply_renderer_metrics(renderer, tile_size)
     renderer._pygame_initialized = False
@@ -30,7 +29,7 @@ def configure_renderer(
     renderer._window_size = None
     renderer._last_health_values = {}
     renderer._damage_flash_until = {}
-    renderer.camera_focus_entity_name = None
+    renderer.camera_focus_entity = None
     renderer.camera_focus_radius_tiles = 1
     renderer.camera_shake_until = 0.0
     renderer.camera_shake_strength = 0.0
@@ -39,13 +38,11 @@ def configure_renderer(
     renderer.selection_outline_color = (128, 203, 255)
     renderer.selection_panel_accent = (128, 203, 255)
     renderer._vignette_cache = {}
-    renderer.selected_entity_name = None
+    renderer.selected_entity = None
 
 
 def focused_radius(env: "Environment", renderer: "Pygame_Renderer") -> int:
-    radius = getattr(env, "observation_radius", None)
-    if radius is None:
-        radius = renderer.camera_focus_radius_tiles
+    radius = env.get_render_value("camera.focus_radius", renderer.camera_focus_radius_tiles)
     return max(0, int(radius))
 
 
@@ -60,23 +57,23 @@ def handle_entity_click(
         if not getattr(entity, "is_agent", False):
             continue
 
-        rect = renderer._last_drawn_entity_rects.get(entity.name)
+        rect = renderer._last_drawn_entity_rects.get(entity)
         if rect is None or not rect.collidepoint(mouse_pos):
             continue
 
         if button == 1:
-            renderer.selected_entity_name = entity.name
+            renderer.selected_entity = entity
             return
 
         if button == 3:
-            renderer.camera_focus_entity_name = entity.name
+            renderer.camera_focus_entity = entity
             renderer.camera_focus_radius_tiles = focused_radius(env, renderer)
         return
 
     if button == 1:
-        renderer.selected_entity_name = None
+        renderer.selected_entity = None
     elif button == 3:
-        renderer.camera_focus_entity_name = None
+        renderer.camera_focus_entity = None
 
 
 def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
