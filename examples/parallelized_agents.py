@@ -74,7 +74,19 @@ def run_exp():
                 Inventory(
                     collectable_tags=["item"],
                     inventory_size=2,
-                    starting_inventory=[Entity(name="Strawberry", position=Position_2D(100, 100), tags=["item"])],
+                    starting_inventory=[
+                        Entity(
+                            name="Strawberry",
+                            position=Position_2D(100, 100),
+                            tags=["item"],
+                            components=[
+                                Renderable(
+                                    sprite_path="sprite_library/src/items/consumables/fruit/strawberry_2.png",
+                                    z_index=2,
+                                )
+                            ],
+                        )
+                    ],
                 ),
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
@@ -121,17 +133,21 @@ def run_exp():
             env.reset()
             continue
 
-        observations = [env.observe(agent_id) for agent_id in range(len(env.agents))]
+        if env.agents:
+            observations = [env.observe(agent_id) for agent_id in range(len(env.agents))]
 
-        with ThreadPoolExecutor(max_workers=len(env.agents)) as executor:
-            results = list(
-                executor.map(
-                    lambda args: args[0].get_component(Agent_Policy).select_action(args[1]),
-                    zip(env.agents, observations),
+            with ThreadPoolExecutor(max_workers=len(env.agents)) as executor:
+                results = list(
+                    executor.map(
+                        lambda args: args[0].get_component(Agent_Policy).select_action(args[1]),
+                        zip(env.agents, observations),
+                    )
                 )
-            )
+            actions, infos = map(list, zip(*results))
 
-        actions, infos = map(list, zip(*results))
+        else:
+            actions = []
+
         env.step(actions)
 
 
