@@ -1,11 +1,6 @@
-import argparse
-import pprint
-import threading
-import time
-from typing import Any, Mapping, Sequence
-
 from word_play.core import (
     Action,
+    Agent_Policy,
     Entity,
     Target_Is_Self,
 )
@@ -16,15 +11,11 @@ from word_play.presets.action_args import (
     String_Arg,
     String_Choice_Arg,
 )
-from word_play.presets.action_policies.batching import build_policy_step_actions
 from word_play.presets.action_policies.follow_action_sequence import Follow_Action_Sequence
 from word_play.presets.action_policies.human import Human_Takes_Action
-from word_play.presets.action_policies.llm_action_and_communication import LLM_Action_And_Communication_Policy
 from word_play.presets.action_policies.random_action import Random_Action_Policy
 from word_play.presets.entity_orderings import randomize_agent_order
 from word_play.presets.environments.simple_2d_grid_world import Simple_2D_Grid_World
-from word_play.presets.models import Chat_Message, Model
-from word_play.presets.models.registry import LLM_MODEL_REGISTRY
 from word_play.presets.movement.simple_2d_grid import (
     Collidable,
     Move_Up,
@@ -50,6 +41,8 @@ from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import Inventory
 from word_play.utils import tilemap_to_entities
 
+import pprint
+
 
 class Test_Action(Action):
 
@@ -71,7 +64,6 @@ class Test_Action(Action):
 
     def action_description_text(self, actor, target_entity, env):
         return "Test Action."
-
 
 
 def run_exp():

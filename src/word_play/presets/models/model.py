@@ -63,12 +63,8 @@ class Model(ABC):
         generation_config: Mapping[str, Any] | None = None,
         max_new_tokens: int | None = None,
     ) -> list[str]:
-        warnings.warn(
-            "Using Model.generate_chat_batch() default implementation. "
-            "This should probably not be used; prefer provider-specific API batching when available.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
+        # WARNING: this is a default implementation of batching. When model level or API batching
+        #   is available, this method should be overwritten.
 
         if len(messages_batch) == 0:
             return []
@@ -85,12 +81,12 @@ class Model(ABC):
 
     def generate_text(
         self,
-        input_text: str,
+        input_text: str | Sequence[str],
         generation_config: Mapping[str, Any] | None = None,
         max_new_tokens: int | None = None,
     ) -> str:
         if not isinstance(input_text, str):
-            raise TypeError("generate_text() accepts one string. Use generate_text_batch() for batched inputs.")
+            return self.generate_text_batch(input_text, generation_config, max_new_tokens)
 
         return self.generate_chat(
             messages=[Chat_Message(role="user", content=input_text)],
@@ -104,6 +100,9 @@ class Model(ABC):
         generation_config: Mapping[str, Any] | None = None,
         max_new_tokens: int | None = None,
     ) -> list[str]:
+        # WARNING: this is a default implementation of batching. When model level or API batching
+        #   is available, this method should be overwritten.
+        
         return self.generate_chat_batch(
             [[Chat_Message(role="user", content=input_text)] for input_text in input_texts],
             generation_config=generation_config,
