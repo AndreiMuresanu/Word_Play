@@ -139,13 +139,13 @@ def run_session(config: RunSessionConfig) -> str | None:
     if config.policy_mode == "llm":
         from word_play.presets.models import OpenRouter_Model, LLM_MODEL_REGISTRY
         llm_model = OpenRouter_Model(
+            model_name=config.model_name,
             generation_params={"temperature": 0.2},
         )
         LLM_MODEL_REGISTRY[config.model_key] = llm_model
         # Also register under "default" so agents created with
         # make_llm_policy(model_key="default") work after env.reset()
         LLM_MODEL_REGISTRY["default"] = llm_model
-        
 
     if len(env.agents) > 1:
         env.hud_sidebar_width = 0
@@ -1084,7 +1084,7 @@ def build_policy_step_actions(
 ) -> list["Action_Selection"]:
     """Build one action per agent by querying each attached Agent_Policy or Non_Agent_Policy."""
     from word_play.core.components import Agent_Policy, Non_Agent_Policy
-    
+
     selections: list[Action_Selection] = []
     for agent_id, agent in enumerate(env.agents):
         # Check for Agent_Policy first (LLM policies), then fall back to Non_Agent_Policy (preview/sequence policies)
@@ -1204,9 +1204,9 @@ def _run_render_session(
     if policy_mode == "llm":
         from word_play.presets.models import OpenRouter_Model, LLM_MODEL_REGISTRY
         llm_model = OpenRouter_Model(
+            model_name=model_name,
             generation_params={"temperature": 0.2},
         )
-
         LLM_MODEL_REGISTRY[model_key] = llm_model
         # Also register under "default" so agents created with
         # make_llm_policy(model_key="default") work after env.reset()
