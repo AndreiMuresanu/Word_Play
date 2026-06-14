@@ -16,6 +16,7 @@ from word_play.core import (
     Observation,
     Render_Context,
     Render_Result,
+    Render_Scene,
     Renderer,
     Renderer_State,
     Target_Is_Self,
@@ -24,6 +25,7 @@ from word_play.presets.action_args import Int_Arg
 from word_play.presets.action_policies.human import Human_Takes_Action
 from word_play.presets.human_io import Human_IO, Human_Text_Request
 from word_play.presets.movement.simple_2d_grid import INFINITE_2D_MOVEMENT_SYSTEM, Position_2D
+from word_play.presets.renderers.pygame_renderer.extractors import Speech_Bubble_Extractor
 from word_play.presets.renderers import (
     Renderable,
     ReplayFrameEnvironment,
@@ -286,6 +288,17 @@ class RenderingRefactorTests(unittest.TestCase):
         self.assertEqual(len(messages), 2)
         self.assertIs(messages[0]["entity"], first)
         self.assertEqual(messages[0]["step"], env.cur_step + 1)
+
+    def test_speech_bubbles_are_visible_during_live_mid_step_prompt_renders(self):
+        agent = self._make_agent()
+        env = DummyEnv([agent], renderer=DummyRenderer())
+        env.render_state.emit("speech", entity=agent, text="Hello", step=env.cur_step + 1)
+        scene = Render_Scene(metadata={"simulation.step": env.cur_step})
+
+        Speech_Bubble_Extractor().extract(env, env.render_state, scene, Render_Context())
+
+        self.assertEqual(len(scene.layers["ui.speech_bubbles"]), 1)
+        self.assertEqual(scene.layers["ui.speech_bubbles"][0]["text"], "Hello")
 
     def test_replay_frame_environment_restores_renderer_entity_refs(self):
         renderer = DummyRenderer()

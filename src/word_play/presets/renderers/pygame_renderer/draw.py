@@ -1131,6 +1131,14 @@ def fit_wrapped_text_lines(
     return fallback_font, lines
 
 
+def speech_step_is_visible(current_step: int, visible_step: Any) -> bool:
+    try:
+        step_value = int(visible_step)
+    except (TypeError, ValueError):
+        return True
+    return step_value in (current_step, current_step + 1)
+
+
 def collect_speech_bubbles(scene: Any) -> list[dict[str, Any]]:
     """Collect speech bubble payloads published into the renderer state."""
     current_step = int(scene_metadata(scene, "simulation.step", 0))
@@ -1139,12 +1147,8 @@ def collect_speech_bubbles(scene: Any) -> list[dict[str, Any]]:
         if not isinstance(bubble, dict):
             continue
         visible_step = bubble.get("step", bubble.get("_step"))
-        if visible_step is not None:
-            try:
-                if int(visible_step) != current_step:
-                    continue
-            except (TypeError, ValueError):
-                pass
+        if visible_step is not None and not speech_step_is_visible(current_step, visible_step):
+            continue
         if "_step" in bubble:
             try:
                 bubble_step = int(bubble["_step"])

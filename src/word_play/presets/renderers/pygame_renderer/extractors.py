@@ -18,6 +18,14 @@ def _frame_step(env: "Environment") -> int:
     return int(getattr(env, "cur_step", getattr(env, "tick", 0)))
 
 
+def _speech_step_is_visible(current_step: int, visible_step: Any) -> bool:
+    try:
+        step_value = int(visible_step)
+    except (TypeError, ValueError):
+        return True
+    return step_value in (current_step, current_step + 1)
+
+
 def _is_in_any_inventory(item: Any, env: "Environment") -> bool:
     if "in_inventory" in getattr(item, "tags", []):
         return True
@@ -96,12 +104,8 @@ class Speech_Bubble_Extractor(Render_Extractor):
                 continue
             bubble = dict(event.payload)
             visible_step = bubble.get("step", bubble.get("_step"))
-            if visible_step is not None:
-                try:
-                    if int(visible_step) != current_step:
-                        continue
-                except (TypeError, ValueError):
-                    pass
+            if visible_step is not None and not _speech_step_is_visible(current_step, visible_step):
+                continue
             if "_step" in bubble:
                 try:
                     bubble_step = int(bubble["_step"])
