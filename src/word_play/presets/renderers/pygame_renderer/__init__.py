@@ -3,17 +3,15 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-from word_play.core import (
-    Render_Context,
-    Render_Event,
-    Render_Extractor,
-    Render_Scene,
-    Renderer,
-    Renderer_State,
+from .extractors import (
+    Background_Tiles_Extractor,
+    Frame_Metadata_Extractor,
+    Hit_Effect_Extractor,
+    Speech_Bubble_Extractor,
+    Visible_Renderables_Extractor,
+    default_pygame_extractors,
 )
-
-from .layout import Grid_Layout_Adapter, Position_Layout_Adapter, SinglePointLayout
-from .pygame_renderer.interactive_env import (
+from .interactive_env import (
     ExperimentRecorder,
     capture_environment_frame,
     default_experiment_log_path,
@@ -21,8 +19,8 @@ from .pygame_renderer.interactive_env import (
     newest_experiment_log_path,
     record_step,
 )
-from .pygame_renderer.renderable import Renderable
-from .pygame_renderer.replay_and_live import (
+from .renderable import Renderable
+from .replay_and_live import (
     ReplayFrameEnvironment,
     default_replay_renderer,
     newest_replay_log_path,
@@ -33,38 +31,33 @@ from .pygame_renderer.replay_and_live import (
 
 
 _LAZY_EXPORT_MODULES = {
-    "Pygame_Renderer": ".pygame_renderer.renderer",
-    "render_environment": ".pygame_renderer.draw",
-    "init_pygame_if_needed": ".pygame_renderer.runtime",
+    "Pygame_Renderer": ".renderer",
+    "init_pygame_if_needed": ".runtime",
 }
 
 
 __all__ = [
+    "Background_Tiles_Extractor",
+    "default_pygame_extractors",
     "ExperimentRecorder",
-    "Grid_Layout_Adapter",
-    "Position_Layout_Adapter",
-    "Render_Context",
-    "Render_Event",
-    "Render_Extractor",
-    "Render_Scene",
-    "Renderable",
-    "Renderer",
-    "Renderer_State",
-    "ReplayFrameEnvironment",
-    "SinglePointLayout",
     "capture_environment_frame",
     "default_experiment_log_path",
-    "default_replay_renderer",
+    "Frame_Metadata_Extractor",
+    "Hit_Effect_Extractor",
     "init_pygame_if_needed",
     "load_recording_payload",
     "newest_experiment_log_path",
     "newest_replay_log_path",
     "Pygame_Renderer",
     "record_step",
-    "render_environment",
+    "Renderable",
+    "ReplayFrameEnvironment",
+    "default_replay_renderer",
     "replay",
     "replay_frames",
     "replay_log_path",
+    "Speech_Bubble_Extractor",
+    "Visible_Renderables_Extractor",
 ]
 
 

@@ -1,59 +1,149 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
-from word_play.core import Position
+from word_play.presets.movement.single_point import Single_Point_Position
 
 if TYPE_CHECKING:
-    from word_play.core import Environment
-    from word_play.presets.systems import Inventory, Container
+    from word_play.core import Environment, Render_Context
 
 
-def _is_in_any_inventory(item, env) -> bool:
-    """Check if item is in any entity's inventory."""
-    from word_play.presets.systems import Inventory
-    for entity in env.state.entities:
-        inventory = entity.get_component(Inventory)
-        if inventory and item in inventory.contents:
-            return True
-    return False
+_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
 
 
-def _is_in_closed_container(item, env) -> bool:
-    """Check if item is in a hidden/closed container."""
-    from word_play.presets.systems import Container
-    for entity in env.state.entities:
-        container = entity.get_component(Container)
-        if container and item in container.contents:
-            if container.visibility == "hidden" and not container.is_open:
-                return True
-    return False
+@dataclass(slots=True)
+class _SinglePointLayoutState:
+    cached_background: list[dict[str, Any]] | None = None
+    offsets_by_entity: dict[Any, tuple[float, float]] = field(default_factory=dict)
+
+
+def _render_frame(env: "Environment" | None) -> dict[str, Any]:
+    if env is None:
+        return {}
+    render_state = getattr(env, "render_state", None)
+    if render_state is None:
+        return {}
+    return getattr(render_state, "frame", {})
+
+
+def _entity_grid_position(entity: Any) -> tuple[int, int] | None:
+    position = getattr(entity, "position", None)
+    x = getattr(position, "x", None)
+    y = getattr(position, "y", None)
+    if x is None or y is None:
+        return None
+    return int(x), int(y)
+
+
+def inferred_floor_tiles(
+    positioned_entities: list[tuple[Any, float, float]],
+    floor_sprite: str,
+) -> list[dict[str, Any]]:
+    positions = [(int(x), int(y)) for _, x, y in positioned_entities]
+    if not positions:
+        return []
+
+    xs = [position[0] for position in positions]
+    ys = [position[1] for position in positions]
+    return [
+        {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
+        for x in range(min(xs), max(xs) + 1)
+        for y in range(min(ys), max(ys) + 1)
+    ]
+
+
+def _floor_tiles_from_bounds(bounds: Any, floor_sprite: str) -> list[dict[str, Any]]:
+    if isinstance(bounds, dict):
+        min_x = int(bounds.get("min_x", 0))
+        max_x = int(bounds.get("max_x", min_x))
+        min_y = int(bounds.get("min_y", 0))
+        max_y = int(bounds.get("max_y", min_y))
+    elif isinstance(bounds, (tuple, list)) and len(bounds) == 4:
+        min_x, max_x, min_y, max_y = (int(value) for value in bounds)
+    else:
+        return []
+
+    return [
+        {"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
+        for x in range(min_x, max_x + 1)
+        for y in range(min_y, max_y + 1)
+    ]
 
 
 class Position_Layout_Adapter(ABC):
     """Map environment positions and optional backgrounds into render space."""
+
     @abstractmethod
-    def screen_position(self, position: Position) -> tuple[float, float]:
+    def screen_position(
+        self,
+        entity: Any,
+        env: "Environment",
+        context: "Render_Context | None" = None,
+    ) -> tuple[float, float]:
         """Convert a world position into renderer grid coordinates."""
 
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
+    def background(
+        self,
+        env: "Environment",
+        positioned_entities: list[tuple[Any, float, float]],
+        _context: "Render_Context | None" = None,
+    ) -> list[dict[str, Any]]:
         """Return background tiles to draw behind entities."""
         return []
 
-    def prepare_env(self, env: "Environment") -> None:
+    def prepare_env(self, env: "Environment", _context: "Render_Context | None" = None) -> None:
         """Update any renderer-facing derived state before drawing."""
         return None
 
 
 class Grid_Layout_Adapter(Position_Layout_Adapter):
     """Use entity x/y values directly as grid coordinates."""
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Return empty - backgrounds are handled by renderer."""
+
+    def background(
+        self,
+        env: "Environment",
+        positioned_entities: list[tuple[Any, float, float]],
+        _context: "Render_Context | None" = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch background tiles from renderer data or auto-generate a floor."""
+        render_frame = _render_frame(env)
+        env_tiles = render_frame.get("world.background_tiles")
+        if env_tiles:
+            return list(env_tiles)
+
+        floor_sprite = str(render_frame.get("world.floor_sprite", _DEFAULT_FLOOR))
+        bounds_tiles = _floor_tiles_from_bounds(render_frame.get("world.bounds"), floor_sprite)
+        if bounds_tiles:
+            return bounds_tiles
+
+        inferred_tiles = inferred_floor_tiles(positioned_entities, floor_sprite)
+        if inferred_tiles:
+            return inferred_tiles
+
+        world_size = render_frame.get("world.size")
+        if isinstance(world_size, dict):
+            width = int(world_size.get("width", 0))
+            height = int(world_size.get("height", 0))
+            origin_x = int(world_size.get("origin_x", 0))
+            origin_y = int(world_size.get("origin_y", 0))
+            return [
+                {"x": origin_x + x, "y": origin_y + y, "kind": "floor", "sprite": floor_sprite}
+                for x in range(max(0, width))
+                for y in range(max(0, height))
+            ]
         return []
 
-    def screen_position(self, position: Position | Any) -> tuple[float, float]:
+    def screen_position(
+        self,
+        entity: Any,
+        _env: "Environment",
+        _context: "Render_Context | None" = None,
+    ) -> tuple[float, float]:
         """Project the position without changing its coordinates."""
+        position = getattr(entity, "position", entity)
         x = getattr(position, 'x', None)
         y = getattr(position, 'y', None)
         if x is not None and y is not None:
@@ -62,6 +152,10 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
         if hasattr(position, '__getitem__') and len(position) >= 2:
             return float(position[0]), float(position[1])
         return 0.0, 0.0
+
+    def prepare_env(self, _env: "Environment", _context: "Render_Context | None" = None) -> None:
+        """Grid rendering derives transient visuals at draw time."""
+        return None
 
 
 def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:
@@ -75,8 +169,6 @@ def _get_slot_offsets(n: int, radius: float) -> list[tuple[float, float]]:
     - 5-8: evenly distributed ring
     - 9+: concentric rings
     """
-    import math
-
     if n == 1:
         return [(0.0, 0.0)]
     elif n == 2:
@@ -164,13 +256,14 @@ class SinglePointLayout(Position_Layout_Adapter):
         self.base_x = center_x
         self.base_y = center_y
         self.radius = radius
-        self.base_radius = radius
         self.layout_mode = layout_mode
         self.include_room = include_room
         self.only_agents = only_agents
-        self._cached_background: list[dict[str, Any]] | None = None
-        self.room_width = 5
-        self.room_height = 5
+
+    def _runtime_state(self, context: "Render_Context | None") -> _SinglePointLayoutState:
+        if context is None:
+            raise ValueError("SinglePointLayout requires a Render_Context for renderer-private layout state.")
+        return context.value_for(self, _SinglePointLayoutState)
 
     def _calculate_room_size(self, n_agents: int) -> tuple[int, int]:
         """Calculate room size based on agent count."""
@@ -188,14 +281,12 @@ class SinglePointLayout(Position_Layout_Adapter):
         """Get a nice floor sprite."""
         return SinglePointLayout.DEFAULT_FLOOR
 
-    def prepare_env(self, env: "Environment") -> None:
+    def prepare_env(self, env: "Environment", context: "Render_Context | None" = None) -> None:
         """Calculate visual positions for entities at this point."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-        import math
-
         if env is None:
             return
 
+        runtime = self._runtime_state(context)
         entities = list(getattr(env.state, "entities", []))
 
         # Filter entities to position
@@ -208,6 +299,7 @@ class SinglePointLayout(Position_Layout_Adapter):
             ]
 
         n = len(positioned_entities)
+        runtime.offsets_by_entity.clear()
         if n == 0:
             return
 
@@ -220,8 +312,7 @@ class SinglePointLayout(Position_Layout_Adapter):
         # Calculate room size if needed
         agent_count = len([e for e in positioned_entities if getattr(e, "is_agent", False)])
         if self.include_room and agent_count > 0:
-            self.room_width, self.room_height = self._calculate_room_size(agent_count)
-            self._cached_background = None
+            runtime.cached_background = None
 
         # Calculate offsets based on layout mode
         if self.layout_mode == "compass":
@@ -231,24 +322,28 @@ class SinglePointLayout(Position_Layout_Adapter):
             for i in range(n):
                 angle = -math.pi / 2 + (2 * math.pi * i / n)
                 offsets.append((
-                    self.base_radius * math.cos(angle),
-                    self.base_radius * math.sin(angle) * 0.7,
+                    self.radius * math.cos(angle),
+                    self.radius * math.sin(angle) * 0.7,
                 ))
 
-        # Assign offsets to each entity
+        # Cache transient layout offsets in renderer-owned private runtime state.
         for entity, (offset_x, offset_y) in zip(positioned_entities, offsets):
-            pos = entity.position
-            if isinstance(pos, Single_Point_Position):
-                pos.visual_offset_x = offset_x
-                pos.visual_offset_y = offset_y
+            runtime.offsets_by_entity[entity] = (offset_x, offset_y)
 
-    def background(self, env: "Environment" | None) -> list[dict[str, Any]]:
+    def background(
+        self,
+        env: "Environment" | None,
+        positioned_entities: list[tuple[Any, float, float]],
+        context: "Render_Context | None" = None,
+    ) -> list[dict[str, Any]]:
         """Generate optional room background with walls and flooring."""
+        del positioned_entities
         if not self.include_room:
             return []
 
-        if self._cached_background is not None:
-            return self._cached_background
+        runtime = self._runtime_state(context)
+        if runtime.cached_background is not None:
+            return runtime.cached_background
 
         if env is None:
             return []
@@ -306,16 +401,19 @@ class SinglePointLayout(Position_Layout_Adapter):
                     "wall_set": self.WALL_SET,
                 })
 
-        self._cached_background = tiles
+        runtime.cached_background = tiles
         return tiles
 
-    def screen_position(self, position: Position | Any) -> tuple[float, float]:
+    def screen_position(
+        self,
+        entity: Any,
+        env: "Environment",
+        context: "Render_Context | None" = None,
+    ) -> tuple[float, float]:
         """Convert position to screen coordinates."""
-        from word_play.presets.movement.single_point import Single_Point_Position
-
+        position = getattr(entity, "position", entity)
         if isinstance(position, Single_Point_Position):
-            offset_x = getattr(position, "visual_offset_x", 0.0)
-            offset_y = getattr(position, "visual_offset_y", 0.0)
+            offset_x, offset_y = self._runtime_state(context).offsets_by_entity.get(entity, (0.0, 0.0))
             return (self.base_x + offset_x, self.base_y + offset_y)
 
         # Fallback: try to get x/y attributes, default to center
@@ -326,273 +424,3 @@ class SinglePointLayout(Position_Layout_Adapter):
                 return (float(x), float(y))
 
         return (self.base_x, self.base_y)
-
-
-# Backward-compatible alias (deprecated, use SinglePointLayout)
-Circle_Layout_Adapter = SinglePointLayout
-
-
-class Graph_Layout_Adapter(Position_Layout_Adapter):
-    """Layout adapter for graph-based environments.
-
-    Renders nodes at their (x,y) coordinates with visible connections.
-    Supports different room types: start, hub, treasure, goal.
-    """
-
-    NODE_SIZE = 0.4
-    EDGE_COLOR = (60, 70, 80)
-
-    # Colors for different room types
-    ROOM_COLORS = {
-        "start": (100, 180, 100),    # Green - start room
-        "hub": (140, 140, 180),      # Blue-gray - hub
-        "treasure": (200, 180, 80),  # Gold - treasure room
-        "goal": (180, 100, 180),     # Purple - goal room
-        "default": (120, 140, 160), # Default blue-gray
-    }
-
-    def __init__(self):
-        self._graph_nodes: dict[str, Any] = {}
-        self._edge_tiles: list[dict[str, Any]] = []
-        self._node_tiles: list[dict[str, Any]] = []
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Extract graph nodes and edges from environment."""
-        self._graph_nodes = getattr(env, "graph_nodes", {})
-        self._build_graph_background()
-
-    def _build_graph_background(self) -> None:
-        """Build background tiles for graph edges and nodes."""
-        self._edge_tiles = []
-        self._node_tiles = []
-
-        # Build edges from node connections
-        drawn_edges: set[tuple[str, str]] = set()
-        for node_id, node in self._graph_nodes.items():
-            # Draw connections as edges
-            for connected_id in getattr(node, "connections", set()):
-                # Avoid drawing edges twice
-                edge_key = tuple(sorted([node_id, connected_id]))
-                if edge_key in drawn_edges:
-                    continue
-                drawn_edges.add(edge_key)
-
-                other = self._graph_nodes.get(connected_id)
-                if other:
-                    self._edge_tiles.extend(self._create_edge_tiles(node, other))
-
-            # Draw node itself with color based on room type
-            room_type = getattr(node, "room_type", "default")
-            node_color = self.ROOM_COLORS.get(room_type, self.ROOM_COLORS["default"])
-
-            self._node_tiles.append({
-                "x": node.x,
-                "y": node.y,
-                "kind": "floor",
-                "sprite": "src/world_tiles/misc/floor_directions.png",
-                "color": node_color,
-                "is_node": True,
-                "node_id": node_id,
-                "room_type": room_type,
-            })
-
-    def _create_edge_tiles(self, node_a: Any, node_b: Any) -> list[dict[str, Any]]:
-        """Create tiles to draw a line between two nodes."""
-        tiles = []
-        x1, y1 = node_a.x, node_a.y
-        x2, y2 = node_b.x, node_b.y
-
-        # Draw intermediate tiles along the edge
-        dx = x2 - x1
-        dy = y2 - y1
-        dist = (dx * dx + dy * dy) ** 0.5
-
-        if dist > 0:
-            steps = int(dist * 2)  # 2 tiles per unit distance
-            for i in range(steps + 1):
-                t = i / max(steps, 1)
-                x = x1 + dx * t
-                y = y1 + dy * t
-                tiles.append({
-                    "x": x,
-                    "y": y,
-                    "kind": "floor",
-                    "sprite": "src/world_tiles/misc/floor_directions.png",
-                    "color": self.EDGE_COLOR,
-                    "is_edge": True,
-                })
-        return tiles
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Return graph edges and nodes as background tiles."""
-        # Rebuild if nodes changed
-        current_nodes = getattr(env, "graph_nodes", {})
-        if current_nodes != self._graph_nodes:
-            self._graph_nodes = current_nodes
-            self._build_graph_background()
-        return self._edge_tiles + self._node_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert graph position to screen coordinates."""
-        from word_play.presets.movement.graph import Graph_Position
-
-        if isinstance(position, Graph_Position):
-            node = self._graph_nodes.get(position.node_id)
-            if node:
-                return (float(node.x), float(node.y))
-            return (0.0, 0.0)
-
-class Continuous_2D_Layout_Adapter(Grid_Layout_Adapter):
-    """Adapter for continuous 2D positions (float coordinates) with camera support.
-
-    Also handles background tiles from environment with camera viewport clamping.
-    """
-
-    def __init__(self, viewport_width: int = 15, viewport_height: int = 15):
-        super().__init__()
-        self.camera_offset_x: float = 0
-        self.camera_offset_y: float = 0
-        self.viewport_width = viewport_width
-        self.viewport_height = viewport_height
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Update camera position based on player position."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
-        # Find the player/agent entity
-        player = getattr(env, "player", None)
-        if player is None and hasattr(env, "agents") and env.agents:
-            player = env.agents[0]
-
-        if player is not None and hasattr(player, "position"):
-            pos = player.position
-            if isinstance(pos, Continuous_Position_2D):
-                # Center camera on player: player_x - half_viewport
-                half_view = self.viewport_width / 2
-                target_camera = pos.x - half_view
-
-                # Clamp to world bounds
-                bounds_min_x = getattr(env, "bounds_min_x", 0)
-                bounds_max_x = getattr(env, "bounds_max_x", target_camera + self.viewport_width)
-                max_cam = max(bounds_min_x, bounds_max_x - self.viewport_width)
-
-                self.camera_offset_x = max(bounds_min_x, min(target_camera, max_cam))
-            else:
-                self.camera_offset_x = getattr(env, "camera_x", 0)
-        else:
-            self.camera_offset_x = getattr(env, "camera_x", 0)
-
-        self.camera_offset_y = getattr(env, "camera_offset_y", 0)
-
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Fetch background tiles from renderer and filter to visible viewport."""
-        renderer = getattr(env, "renderer_impl", None)
-        if renderer is None or not hasattr(renderer, "background_tiles"):
-            return []
-        all_tiles = renderer.background_tiles()
-
-        # Filter to visible viewport (camera area + margin)
-        margin = 2  # Extra tiles on each side for smooth scrolling
-        visible_tiles = []
-
-        for tile in all_tiles:
-            tx = float(tile.get("x", 0))
-            ty = float(tile.get("y", 0))
-
-            # Check if tile is within camera viewport (y check too)
-            if (self.camera_offset_x - margin <= tx <=
-                self.camera_offset_x + self.viewport_width + margin and
-                self.camera_offset_y - margin <= ty <=
-                self.camera_offset_y + self.viewport_height + margin):
-                # Apply camera transform to tile position (world -> screen)
-                visible_tiles.append({
-                    **tile,
-                    "x": tx - self.camera_offset_x,
-                    "y": ty - self.camera_offset_y,
-                })
-
-        return visible_tiles
-
-    def screen_position(self, position: Position) -> tuple[float, float]:
-        """Convert continuous position to screen coordinates with camera offset."""
-        from word_play.presets.movement.continuous_2d import Continuous_Position_2D
-
-        if isinstance(position, Continuous_Position_2D):
-            return (
-                float(position.x) - self.camera_offset_x,
-                float(position.y) - self.camera_offset_y,
-            )
-
-        return super().screen_position(position)
-
-
-_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
-
-
-class Environment_Layout_Adapter(Grid_Layout_Adapter):
-    """Grid layout that fetches background tiles from env or renderer."""
-    def background(self, env: "Environment") -> list[dict[str, Any]]:
-        """Fetch background tiles from env.background_tiles, then renderer, or auto-generate floor."""
-        env_tiles = getattr(env, "background_tiles", None)
-        if env_tiles:
-            return list(env_tiles)
-        # Auto-generate floor from self.floor_sprite + width/height
-        floor_sprite = getattr(env, "floor_sprite", None) or _DEFAULT_FLOOR
-        w = getattr(env, "width", 0)
-        h = getattr(env, "height", 0)
-        if w > 0 and h > 0:
-            return [{"x": x, "y": y, "kind": "floor", "sprite": floor_sprite}
-                    for x in range(w) for y in range(h)]
-        renderer = getattr(env, "renderer_impl", None)
-        if renderer is not None and hasattr(renderer, "background_tiles"):
-            return renderer.background_tiles()
-        return []
-
-    def prepare_env(self, env: "Environment") -> None:
-        """Apply common renderer-side sync for inventories, holders, crafters, and containers."""
-        try:
-            from word_play.presets.systems import Inventory, Crafter, Single_Item_Holder, Container
-            from .renderer import Renderable
-        except Exception:
-            return
-
-        for entity in getattr(getattr(env, "state", None), "entities", []):
-            renderable = entity.get_component(Renderable) if hasattr(entity, "get_component") else None
-            if renderable is None:
-                continue
-
-            inventory = entity.get_component(Inventory)
-            holder = entity.get_component(Single_Item_Holder)
-            crafter = entity.get_component(Crafter)
-            container = entity.get_component(Container)
-
-            if inventory is not None:
-                held_item = inventory.contents[0] if inventory.contents else None
-                held_renderable = None if held_item is None else held_item.get_component(Renderable)
-                renderable.overlay_sprite = None if held_renderable is None else held_renderable.sprite_path
-                renderable.overlay_mode = "badge"
-                renderable.overlay_scale = 0.28
-            elif holder is not None and holder.stored_item is not None:
-                item_renderable = holder.stored_item.get_component(Renderable)
-                if item_renderable is not None:
-                    renderable.overlay_sprite = item_renderable.sprite_path
-                    renderable.overlay_mode = "center"
-                    renderable.overlay_scale = 0.75
-            elif crafter is not None:
-                if crafter.output_item is not None:
-                    # Output is ready - show the crafted item
-                    output_renderable = crafter.output_item.get_component(Renderable)
-                    if output_renderable is not None:
-                        renderable.overlay_sprite = output_renderable.sprite_path
-                        renderable.overlay_mode = "center"
-                        renderable.overlay_scale = 0.75
-                elif crafter.active_recipe is not None and crafter.remaining_steps is not None:
-                    # Crafting in progress - no overlay needed, just show in HUD
-                    renderable.overlay_sprite = None
-                else:
-                    renderable.overlay_sprite = None
-            else:
-                renderable.overlay_sprite = None
-
-            if "collectable" in entity.tags:
-                renderable.visible = not _is_in_any_inventory(entity, env) and not _is_in_closed_container(entity, env)

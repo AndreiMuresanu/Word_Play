@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from word_play.core import Action_Selection, Entity, Environment, Observation
+from word_play.core import Entity, Environment, Observation, Action_Selection, Renderer
 from word_play.presets.env_mixins.simple_env_reset_mixin import Simple_Env_Reset_Mixin
 from word_play.presets.entity_orderings import entity_definition_order
 from word_play.presets.movement.simple_2d_grid import INFINITE_2D_MOVEMENT_SYSTEM, Position_2D
@@ -17,6 +17,7 @@ class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
         entities: list[Entity],
         entity_order: Callable[[list[Entity], Environment], list[int]] = entity_definition_order,
         observation_radius: int = 0,
+        renderer: Renderer | None = None,
         reward_func: Callable[[list[Action_Selection], Environment], list[float]] = zero_reward_func,
     ):
         self.observation_radius = observation_radius
@@ -26,6 +27,7 @@ class Simple_2D_Grid_World(Simple_Env_Reset_Mixin, Environment):
             movement_system=INFINITE_2D_MOVEMENT_SYSTEM,
             reward_func=reward_func,
             entity_order=entity_order,
+            renderer=renderer,
         )
 
     def entities_in_observation_square(self, position: Position_2D) -> list[Entity]:

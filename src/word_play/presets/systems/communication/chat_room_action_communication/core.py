@@ -29,6 +29,13 @@ def sim_simple_conversation(participants: list[Entity], env: Environment, conver
         for speaker in participants:
             recipients = [entity for entity in participants if entity is not speaker]
             message = speaker.get_component(Communication_Policy).send_message(recipients, env)
+            env.render_state.emit(
+                "speech",
+                entity=speaker,
+                text=str(message),
+                turn=turn,
+                step=getattr(env, "cur_step", 0) + 1,
+            )
             for recipient in recipients:
                 recipient.get_component(Communication_Policy).receive_message(message, speaker, env)
 

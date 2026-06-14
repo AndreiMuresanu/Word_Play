@@ -5,8 +5,11 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from .runtime import pygame_runtime
+from .wall_geometry import adjacent_wall_variant_name, wall_connections
+
 if TYPE_CHECKING:
-    from .renderer import PygameRenderer
+    from .renderer import Pygame_Renderer
 
 
 def candidate_asset_paths(asset_name: str) -> list[Path]:
@@ -19,54 +22,55 @@ def candidate_asset_paths(asset_name: str) -> list[Path]:
     ]
 
 
-def get_or_load_image(renderer: "PygameRenderer", sprite_name: str) -> Any | None:
+def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | None:
     """Load a sprite once and reuse it from the renderer cache."""
-    if sprite_name in renderer._image_cache:
-        return renderer._image_cache[sprite_name]
+    session = pygame_runtime(renderer).session
+    if sprite_name in session.image_cache:
+        return session.image_cache[sprite_name]
 
     for path in candidate_asset_paths(sprite_name):
         if path.exists() and path.is_file():
             surface = pygame.image.load(str(path)).convert_alpha()
-            renderer._image_cache[sprite_name] = surface
+            session.image_cache[sprite_name] = surface
             return surface
 
-    renderer._image_cache[sprite_name] = None
+    session.image_cache[sprite_name] = None
     return None
 
 
-def get_scaled_image(renderer: "PygameRenderer", sprite_name: str, width: int, height: int) -> Any | None:
+def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, height: int) -> Any | None:
     """Load and cache a sprite scaled to the requested dimensions."""
+    session = pygame_runtime(renderer).session
     cache_key = (sprite_name, width, height)
-    if cache_key in renderer._scaled_image_cache:
-        return renderer._scaled_image_cache[cache_key]
+    if cache_key in session.scaled_image_cache:
+        return session.scaled_image_cache[cache_key]
 
     image = get_or_load_image(renderer, sprite_name)
     if image is None:
-        renderer._scaled_image_cache[cache_key] = None
+        session.scaled_image_cache[cache_key] = None
         return None
 
     scaled = pygame.transform.scale(image, (width, height))
-    renderer._scaled_image_cache[cache_key] = scaled
+    session.scaled_image_cache[cache_key] = scaled
     return scaled
 
 
-def resolve_wall_sprite(renderer: "PygameRenderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
+def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
     """Choose the best wall sprite variant for a tile based on neighbors."""
-    from .wall_geometry import adjacent_wall_variant_name, wall_connections
-
+    session = pygame_runtime(renderer).session
     candidate_roots = candidate_asset_paths(wall_set)
     wall_root = next((path for path in candidate_roots if path.exists() and path.is_dir()), None)
     if wall_root is None:
         raise FileNotFoundError(f"Wall set folder could not be resolved: '{wall_set}'.")
 
-    available = renderer._wall_set_cache.get(wall_set)
+    available = session.wall_set_cache.get(wall_set)
     if available is None:
         available = {
             path.stem.removeprefix(f"{wall_root.name}_"): path.name
             for path in wall_root.glob("*.png")
             if path.is_file()
         }
-        renderer._wall_set_cache[wall_set] = available
+        session.wall_set_cache[wall_set] = available
 
     target_variant = adjacent_wall_variant_name(neighbors)
     if target_variant in available:

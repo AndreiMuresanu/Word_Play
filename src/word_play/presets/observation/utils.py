@@ -3,6 +3,7 @@ from __future__ import annotations
 import pprint
 
 from word_play.core import Agent_Policy, Entity, Action_Selection, Non_Agent_Policy
+from word_play.presets.renderers.pygame_renderer.renderable import Renderable
 from word_play.presets.systems.communication.core import Communication_Policy
 
 
@@ -33,7 +34,7 @@ def entity_state_to_str_with_complete_info(entity: Entity) -> str:
             "components": [
                 {"component type": ctype.__name__} | component_data_attributes(comp)
                 for ctype, comp in entity.components.items()
-                if component_data_attributes(comp)
+                if not issubclass(ctype, Renderable) and component_data_attributes(comp)
             ],
         },
         sort_dicts=False,
@@ -51,6 +52,8 @@ def entity_state_to_str(entity: Entity) -> str:
 
     for ctype, comp in entity.components.items():
         component_name = ctype.__name__
+        if issubclass(ctype, Renderable):
+            continue
         component_data = component_data_attributes(comp)
         if not component_data:
             continue

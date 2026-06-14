@@ -40,6 +40,8 @@ class Attack(Action):
 
     def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         target_entity.get_component(Health).health -= self.damage_amount
+        visible_step = getattr(env, "cur_step", 0) + 1
+        env.render_state.emit("hit", entity=target_entity, step=visible_step, scale=0.75)
 
     def action_description_text(self, actor: Entity, target_entity: Entity, env: Environment) -> str:
         return f"{self.name} {target_entity.name}"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from .actions import Action_Selection, Target_Is_Nearby, Target_Is_Self, Target_Not_Self
@@ -9,6 +9,7 @@ from .components import Non_Agent_Policy
 from .entity import Entity
 from .movement import Movement_System, Position
 from .observation import Observation
+from .rendering import Render_Result, Renderer, Renderer_State
 
 
 @dataclass(slots=True)
@@ -20,6 +21,7 @@ class Environment_State:
     """
 
     entities: list[Entity]
+    renderer_state: Renderer_State = field(default_factory=Renderer_State)
 
 
 # TODO: need to make agent_id more general then an int. This way we can make a general last() method which returns
@@ -52,6 +54,7 @@ class Environment(ABC):
         movement_system: Movement_System,
         reward_func: Callable[[list[Action_Selection, Environment]], list[float]],
         entity_order: Callable[[list[Entity], Environment], list[int]],
+        renderer: Renderer | None = None,
     ) -> None:
         """
         entity_order defines how the ordering of state.entities is changed each step. The order of state.entities
@@ -63,13 +66,23 @@ class Environment(ABC):
               reordering rules. E.g., reordering based on an entity's initiative stat.
         """
         self.description = description
-        self.state = Environment_State(entities)
+        self.renderer = renderer
+        self.state = Environment_State(entities, renderer_state=self._create_renderer_state())
         self.cur_step = 0
         self.movement_system = movement_system
         self.reward_func = reward_func
         self.entity_order = entity_order
         self.reset()
         self.post_init()
+
+    def _create_renderer_state(self) -> Renderer_State:
+        if self.renderer is None:
+            return Renderer_State()
+        return self.renderer.create_renderer_state()
+
+    @property
+    def render_state(self) -> Renderer_State:
+        return self.state.renderer_state
 
     def post_init(self) -> None:
         """This method is called at the end of the __init__ method. It can be overwritten to provide more complex logic."""
@@ -108,13 +121,18 @@ class Environment(ABC):
         """This method is used by the reset() method to reset environment specific state."""
         pass
 
-    def render(self) -> None:
-        """This is for visualizing the environment. It is not required to be implemented."""
-        raise NotImplementedError("This environment does not support rendering.")
+    def render(self) -> Render_Result:
+        """Render via the environment's optional active renderer."""
+        if self.renderer is None:
+            raise NotImplementedError("This environment does not support rendering.")
+        result = self.renderer.render(self)
+        self.render_state.clear_events()
+        return result
 
     def reset(self, seed=None) -> None:
         self.cur_episode_seed = seed
         self._reset(seed=seed)
+        self.state.renderer_state = self._create_renderer_state()
         self.cur_step = 0
         self._init_agent_list()
         self._init_agent_idx_dict()

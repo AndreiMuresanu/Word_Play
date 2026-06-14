@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from word_play.core import Entity
 
-    from .renderer import PygameRenderer, Renderable
+    from .renderable import Renderable
+    from .renderer import Pygame_Renderer
 
 
 def normalize_background_item(item: Any) -> dict[str, Any]:
@@ -20,7 +21,8 @@ def normalize_background_item(item: Any) -> dict[str, Any]:
 
 
 def world_bounds(
-    renderer: "PygameRenderer",
+    renderer: "Pygame_Renderer",
+    env: Any,
     background_items: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> tuple[int, int, int, int]:
@@ -34,7 +36,7 @@ def world_bounds(
 
     for _, entity, _ in renderables:
         try:
-            x, y = renderer.layout.screen_position(entity.position)
+            x, y = renderer.layout.screen_position(entity, env, renderer.render_context)
         except AttributeError:
             continue
         xs.append(int(x))
@@ -45,7 +47,7 @@ def world_bounds(
     return min(xs), max(xs), min(ys), max(ys)
 
 
-def screen_rect_for_tile(renderer: "PygameRenderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
+def screen_rect_for_tile(renderer: "Pygame_Renderer", x: int, y: int, min_x: int, max_y: int) -> tuple[int, int]:
     """Convert a world tile coordinate into the top-left screen pixel."""
     px = renderer.viewport_pad_w + (x - min_x) * renderer.tile_size
     py = renderer.viewport_pad_n + (max_y - y) * renderer.tile_size
@@ -61,22 +63,6 @@ def collect_wall_positions(background_items: list[dict[str, Any]]) -> set[tuple[
     }
 
 
-def screen_position_for_entity(
-    renderer: "PygameRenderer",
-    entity: "Entity",
-    *,
-    min_x: int,
-    max_y: int,
-) -> tuple[int, int] | None:
-    """Convert an entity position into its on-screen pixel location."""
-    position = getattr(entity, "position", None)
-    if position is None:
-        return None
-
-    x, y = renderer.layout.screen_position(position)
-    return screen_rect_for_tile(renderer, int(x), int(y), min_x, max_y)
-
-
 def wall_neighbor_mask(x: int, y: int, wall_positions: set[tuple[int, int]]) -> dict[str, bool]:
     """Report which neighboring wall tiles surround a wall cell."""
     return {
@@ -89,22 +75,6 @@ def wall_neighbor_mask(x: int, y: int, wall_positions: set[tuple[int, int]]) -> 
         "sw": (x - 1, y - 1) in wall_positions,
         "nw": (x - 1, y + 1) in wall_positions,
     }
-
-
-def wall_variant(neighbors: dict[str, bool]) -> str:
-    """Classify a wall tile shape from its cardinal connections."""
-    cardinal_count = sum(int(neighbors[key]) for key in ("n", "e", "s", "w"))
-    if cardinal_count == 4:
-        return "cross"
-    if cardinal_count == 3:
-        return "t_junction"
-    if cardinal_count == 2:
-        if (neighbors["n"] and neighbors["s"]) or (neighbors["e"] and neighbors["w"]):
-            return "straight"
-        return "corner"
-    if cardinal_count == 1:
-        return "end_cap"
-    return "pillar"
 
 
 def wall_connections(neighbors: dict[str, bool]) -> tuple[str, ...]:

@@ -9,6 +9,7 @@ rather than this top-level package.
 __all__ = [
     "action_policies",
     "environments",
+    "human_io",
     "movement",
     "systems",
     "renderers",
