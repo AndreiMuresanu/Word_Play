@@ -792,9 +792,15 @@ def draw_hud_panel(renderer: "Pygame_Renderer", scene: Any, x_offset: int, width
     if is_replay:
         controls_text = "Space: play/pause | Left/Right: step | Home/End: jump | R: restart | ESC: exit"
     elif sidebar_state(scene):
-        controls_text = "Left click agent: inspect | Right click agent: follow | Terminal: wheel/PgUp/PgDn scroll | ESC: exit"
+        controls_text = (
+            "Left click entity: inspect | Right click entity: follow/unfollow | "
+            "Terminal: wheel/PgUp/PgDn scroll | ESC: exit"
+        )
     else:
-        controls_text = "Left click agent: inspect | Right click agent: follow | Terminal: wheel/PgUp/PgDn scroll | R: reset | ESC: exit"
+        controls_text = (
+            "Left click entity: inspect | Right click entity: follow/unfollow | "
+            "Terminal: wheel/PgUp/PgDn scroll | R: reset | ESC: exit"
+        )
     for line_index, line in enumerate(wrap_text_lines(renderer.small_font, controls_text, width - renderer.margin * 2)[:2]):
         controls = renderer.small_font.render(line, True, (150, 160, 180))
         renderer.screen.blit(controls, (x_offset + renderer.margin, hud_top + 48 + line_index * renderer.small_font.get_linesize()))

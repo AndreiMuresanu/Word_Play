@@ -101,22 +101,25 @@ def handle_entity_click(
     button: int = 1,
 ) -> None:
     view = pygame_runtime(renderer).view
-    for entity in getattr(getattr(env, "state", None), "entities", []):
-        if not getattr(entity, "is_agent", False):
-            continue
+    hit_entity = None
+    for entity, rect in reversed(list(view.last_drawn_entity_rects.items())):
+        if rect.collidepoint(mouse_pos):
+            hit_entity = entity
+            break
 
-        rect = view.last_drawn_entity_rects.get(entity)
-        if rect is None or not rect.collidepoint(mouse_pos):
-            continue
-
+    if hit_entity is not None:
         if button == 1:
-            view.selected_entity = entity
+            view.selected_entity = hit_entity
             return
 
         if button == 3:
-            view.camera_focus_entity = entity
+            if view.camera_focus_entity is hit_entity:
+                view.camera_focus_entity = None
+                return
+
+            view.camera_focus_entity = hit_entity
             view.camera_focus_radius_tiles = focused_radius(env, renderer)
-        return
+            return
 
     if button == 1:
         view.selected_entity = None
