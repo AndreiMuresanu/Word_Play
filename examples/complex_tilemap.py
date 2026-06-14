@@ -146,6 +146,7 @@ def run_exp():
                 Health(max_health=5, starting_health=5),
                 Follow_Action_Sequence([(Move_Up, None), (Move_Down, None)]),
                 TalkingCow(),
+                Collidable(collidable_tags=["wall"]),
             ],
         },
         "h": {
@@ -153,6 +154,7 @@ def run_exp():
             "components": [
                 Health(max_health=10, starting_health=10),
                 TalkingCow(),
+                Collidable(collidable_tags=["wall"]),
             ],
         },
         "t": {
@@ -160,6 +162,7 @@ def run_exp():
             "components": [
                 Health(max_health=1, starting_health=1),
                 TalkingCow(),
+                Collidable(collidable_tags=["wall"]),
             ],
         },
         "s": {
@@ -182,7 +185,6 @@ def run_exp():
         for agent_id, agent in enumerate(env.agents):
             observation = env.observe(agent_id)
             action, info = agent.get_component(Agent_Policy).select_action(observation)
-            print(f"[step {step}] {agent.name} -> {action}")
             cur_step_actions.append(action)
 
         env.step(cur_step_actions)
