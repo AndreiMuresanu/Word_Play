@@ -16,14 +16,11 @@ class Human_Communication_Policy(Communication_Policy):
             self.io.notify(info, env=env)
 
     def send_message(self, recipients: list[Entity], env: Environment, info: str | None = None) -> str:
-        speaker_name = self.entity.name if self.entity is not None else "Human"
         body_lines = [f"Recipients: {', '.join(entity.name for entity in recipients) or 'nobody'}"]
         if info:
             body_lines.append(info)
         return self.io.request_text(
-            Human_Text_Request(
-                observation_text="\n".join(body_lines),
-            ),
+            Human_Text_Request(observation_text="\n".join(body_lines)),
             env=env,
         )
 

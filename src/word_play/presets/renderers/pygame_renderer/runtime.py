@@ -50,7 +50,6 @@ class Pygame_Prompt_State:
     input_text: str = ""
     history_blocks: list[str] = field(default_factory=list)
     scroll_lines: int = 0
-    active_start_block_index: int | None = None
     panel_rect: pygame.Rect | None = None
 
 

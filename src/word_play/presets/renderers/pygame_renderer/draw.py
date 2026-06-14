@@ -955,20 +955,17 @@ def wrap_text_block_lines(font: Any, text: str, max_width: int) -> list[str]:
     return wrapped_lines or [""]
 
 
-def terminal_history_lines(renderer: "Pygame_Renderer", prompt_state: Any, max_width: int) -> tuple[list[str], int]:
-    """Build wrapped terminal transcript lines and the active prompt start line."""
+def terminal_history_lines(renderer: "Pygame_Renderer", prompt_state: Any, max_width: int) -> list[str]:
+    """Build wrapped terminal transcript lines."""
     lines: list[str] = []
-    active_start_line = 0
-    for block_index, block in enumerate(prompt_state.history_blocks):
-        if prompt_state.active_start_block_index == block_index:
-            active_start_line = len(lines)
+    for block in prompt_state.history_blocks:
         if block == "":
             lines.append("")
             continue
         lines.extend(wrap_text_block_lines(renderer.small_font, str(block), max_width=max_width))
     if not lines:
-        return ["Human terminal ready."], 0
-    return lines, active_start_line
+        return ["Human terminal ready."]
+    return lines
 
 
 def draw_text_terminal_panel(
@@ -1051,15 +1048,10 @@ def draw_text_terminal_panel(
 
     line_height = renderer.small_font.get_linesize() + 4
     visible_line_count = max(1, (transcript_rect.height - 12) // line_height)
-    transcript_lines, active_start_line = terminal_history_lines(renderer, prompt, transcript_rect.width - 20)
+    transcript_lines = terminal_history_lines(renderer, prompt, transcript_rect.width - 20)
     max_offset = max(0, len(transcript_lines) - visible_line_count)
-    if prompt.active and prompt.active_start_block_index is not None:
-        max_relative_offset = max(0, len(transcript_lines) - visible_line_count - active_start_line)
-        prompt.scroll_lines = max(0, min(prompt.scroll_lines, max_relative_offset))
-        start_index = min(len(transcript_lines), active_start_line + prompt.scroll_lines)
-    else:
-        prompt.scroll_lines = max(0, min(prompt.scroll_lines, max_offset))
-        start_index = prompt.scroll_lines
+    prompt.scroll_lines = max(0, min(prompt.scroll_lines, max_offset))
+    start_index = prompt.scroll_lines
     end_index = min(len(transcript_lines), start_index + visible_line_count)
     line_y = transcript_rect.y + 8
     for line in transcript_lines[start_index:end_index]:

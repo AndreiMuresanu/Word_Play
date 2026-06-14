@@ -25,10 +25,7 @@ class Pygame_Overlay_Human_IO(Human_IO):
         else:
             prompt_state.history_blocks.append("")
         if len(prompt_state.history_blocks) > self.MAX_HISTORY_BLOCKS:
-            removed_count = len(prompt_state.history_blocks) - self.MAX_HISTORY_BLOCKS
             prompt_state.history_blocks = prompt_state.history_blocks[-self.MAX_HISTORY_BLOCKS :]
-            if prompt_state.active_start_block_index is not None:
-                prompt_state.active_start_block_index = max(0, prompt_state.active_start_block_index - removed_count)
 
     def _renderer_for_env(self, env):
         renderer = None if env is None else getattr(env, "renderer", None)
@@ -64,7 +61,6 @@ class Pygame_Overlay_Human_IO(Human_IO):
         prompt_state.body = request.observation_text
         prompt_state.prompt = request.prompt_text()
         prompt_state.input_text = request.initial_text
-        prompt_state.active_start_block_index = len(prompt_state.history_blocks)
         if prompt_state.body:
             self._append_history(renderer, prompt_state.body)
         set_prompt_scroll_end(renderer)
@@ -131,4 +127,3 @@ class Pygame_Overlay_Human_IO(Human_IO):
             prompt_state.body = ""
             prompt_state.prompt = "> "
             prompt_state.input_text = ""
-            prompt_state.active_start_block_index = None

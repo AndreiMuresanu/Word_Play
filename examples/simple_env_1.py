@@ -168,9 +168,7 @@ def run_exp():
                 Health(max_health=5, starting_health=3),
                 Collidable(collidable_tags=["wall"]),
                 Human_Communication_Policy(),
-                Renderable(
-                    sprite_path="sprite_library/src/characters/humanoids/human/ordinary_human_2.png", z_index=10
-                ),
+                Renderable(sprite_path="sprite_library/src/characters/monsters/misc/archaeologist.png", z_index=10),
             ],
         },
         "f": {
@@ -230,24 +228,23 @@ def run_exp():
         entities=tilemap_to_entities(entity_tilemap, entity_tileset),
         entity_order=randomize_agent_order,
         observation_radius=1,
-        renderer=renderer,
+        # renderer=renderer,
     )
 
     for step in range(exp_steps):
         time.sleep(0.25)
 
-        render_result = env.render()
-        if render_result.quit_requested:
-            break
-        if render_result.reset_requested:
-            env.reset()
-            continue
+        # render_result = env.render()
+        # if render_result.quit_requested:
+        #     break
+        # if render_result.reset_requested:
+        #     env.reset()
+        #     continue
 
         cur_step_actions = []
         for agent_id, agent in enumerate(env.agents):
             observation = env.observe(agent_id)
             action, info = agent.get_component(Agent_Policy).select_action(observation)
-            print(f"[step {step}] {agent.name} -> {action}")
             cur_step_actions.append(action)
 
         env.step(cur_step_actions)
