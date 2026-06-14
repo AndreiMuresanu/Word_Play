@@ -29,6 +29,7 @@ from word_play.presets.systems.inventory import Inventory
 from word_play.utils import tilemap_to_entities
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 def run_exp():
@@ -120,13 +121,18 @@ def run_exp():
             env.reset()
             continue
 
-        cur_step_actions = []
-        for agent_id, agent in enumerate(env.agents):
-            observation = env.observe(agent_id)
-            action, info = agent.get_component(Agent_Policy).select_action(observation)
-            cur_step_actions.append(action)
+        observations = [env.observe(agent_id) for agent_id in range(len(env.agents))]
 
-        env.step(cur_step_actions)
+        with ThreadPoolExecutor(max_workers=len(env.agents)) as executor:
+            results = list(
+                executor.map(
+                    lambda args: args[0].get_component(Agent_Policy).select_action(args[1]),
+                    zip(env.agents, observations),
+                )
+            )
+
+        actions, infos = map(list, zip(*results))
+        env.step(actions)
 
 
 if __name__ == "__main__":
