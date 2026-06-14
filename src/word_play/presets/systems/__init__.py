@@ -1,5 +1,6 @@
 from word_play.presets.systems.action_compositions import Action_Chain
 from word_play.presets.systems.combat import Attack, Heal
+from word_play.presets.systems.consuming import Consume, Consumable
 from word_play.presets.systems.do_nothing import Do_Nothing
 from word_play.presets.systems.health import Health
 from word_play.presets.systems.inventory import (
@@ -13,6 +14,8 @@ from word_play.presets.systems.inventory import (
 __all__ = [
     "Action_Chain",
     "Attack",
+    "Consume",
+    "Consumable",
     "Do_Nothing",
     "Drop_Item",
     "Heal",
