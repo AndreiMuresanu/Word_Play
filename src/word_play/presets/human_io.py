@@ -12,9 +12,10 @@ if TYPE_CHECKING:
 class Human_Text_Request:
     observation_text: str
     initial_text: str = ""
+    prompt: str = "> "
 
     def prompt_text(self) -> str:
-        return "> "
+        return self.prompt
 
 
 class Human_IO(ABC):

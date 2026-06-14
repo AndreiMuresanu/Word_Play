@@ -228,18 +228,18 @@ def run_exp():
         entities=tilemap_to_entities(entity_tilemap, entity_tileset),
         entity_order=randomize_agent_order,
         observation_radius=1,
-        # renderer=renderer,
+        renderer=renderer,
     )
 
     for step in range(exp_steps):
         time.sleep(0.25)
 
-        # render_result = env.render()
-        # if render_result.quit_requested:
-        #     break
-        # if render_result.reset_requested:
-        #     env.reset()
-        #     continue
+        render_result = env.render()
+        if render_result.quit_requested:
+            break
+        if render_result.reset_requested:
+            env.reset()
+            continue
 
         cur_step_actions = []
         for agent_id, agent in enumerate(env.agents):

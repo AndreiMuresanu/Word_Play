@@ -243,7 +243,29 @@ class RenderingRefactorTests(unittest.TestCase):
         message = policy.send_message([recipient], env)
 
         self.assertEqual(message, "hello")
-        self.assertIn("Recipients: Recipient", io_backend.requests[0].observation_text)
+        self.assertIn("To: Recipient", io_backend.requests[0].observation_text)
+        self.assertEqual(io_backend.requests[0].prompt_text(), "Speaker> ")
+
+    def test_human_conversation_start_and_end_are_deduped_per_conversation(self):
+        io_backend = RecordingHumanIO(["hello", "hi"])
+        first_policy = Human_Communication_Policy(io=io_backend)
+        second_policy = Human_Communication_Policy(io=io_backend)
+        first = Entity(
+            name="Speaker One",
+            position=Position_2D(0, 0),
+            components=[first_policy],
+        )
+        second = Entity(
+            name="Speaker Two",
+            position=Position_2D(0, 1),
+            components=[second_policy],
+        )
+        env = DummyEnv([first, second])
+
+        sim_simple_conversation([first, second], env, conversation_duration=1)
+
+        self.assertEqual(io_backend.notifications.count("Conversation started: Speaker One, Speaker Two"), 1)
+        self.assertEqual(io_backend.notifications.count("Conversation ended: Speaker One, Speaker Two"), 1)
 
     def test_conversation_messages_publish_into_renderer_state_events(self):
         first = Entity(
