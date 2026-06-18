@@ -95,6 +95,139 @@ For many grid-world examples, start with `Simple_2D_Grid_World` and
 `Simple_Observation`. Add custom sections to observations with
 `extra_sections` when the agent needs task-specific context.
 
+## Renderer
+
+The renderer preset is a pygame renderer for watching an environment live,
+inspecting agents, focusing an agent's observation window, and replaying a
+saved run.
+
+### Add Sprites To Entities
+
+Attach `Renderable` to each entity you want to draw:
+
+```python
+from word_play.core import Entity
+from word_play.presets.movement.simple_2d_grid import Position_2D
+from word_play.presets.renderers import Renderable
+
+player = Entity(
+    name="Alice",
+    position=Position_2D(2, 3),
+    tags=["player"],
+    components=[
+        Renderable(
+            sprite_path="sprite_library/src/characters/humanoids/dwarven/dwarf_expert.png",
+            z_index=10,
+        ),
+    ],
+)
+```
+
+For walls, pass `wall_set`; the renderer handles the wall connections and can
+infer the floor area from the wall positions:
+
+```python
+wall = Entity(
+    name="Wall",
+    position=Position_2D(1, 1),
+    tags=["wall"],
+    components=[
+        Renderable(
+            sprite_path="sprite_library/src/world_tiles/indoors/wall_sets/bright_brick_wall/bright_brick_wall_center.png",
+            wall_set="sprite_library/src/world_tiles/indoors/wall_sets/bright_brick_wall",
+        ),
+    ],
+)
+```
+
+Set the floor sprite on the environment:
+
+```python
+env.floor_sprite = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png"
+```
+
+### Live Rendering
+
+Call `render_step(env)` inside your normal experiment loop:
+
+```python
+from word_play.core import Agent_Policy
+from word_play.presets.renderers import render_step
+
+for step in range(100):
+    if not render_step(env, step_delay=0.15):
+        break
+
+    selections = []
+    for agent_id, agent in enumerate(env.agents):
+        observation = env.observe(agent_id)
+        action_selection, _ = agent.get_component(Agent_Policy).select_action(observation)
+        selections.append(action_selection)
+
+    env.step(selections)
+```
+
+Live controls:
+
+- Left click an agent to open the agent info card.
+- Right click an agent to focus and follow its observation-sized view.
+- Right click empty space to return to the full environment view.
+- `R` calls `env.reset()` if the environment has a reset method.
+- Escape or closing the window quits rendering.
+
+When `Human_Takes_Action` or `Human_Communication_Policy` is used with a
+rendered environment, action selection, action kwargs, and chat input appear in
+the pygame sidebar instead of the terminal.
+
+The sidebar shows the current observation, available actions, selected action,
+and any required action input.
+
+### Replays
+
+Use `record_step` to save replay frames:
+
+```python
+from word_play.core import Agent_Policy
+from word_play.presets.renderers import record_step
+
+for step in range(100):
+    selections = []
+    for agent_id, agent in enumerate(env.agents):
+        observation = env.observe(agent_id)
+        action_selection, _ = agent.get_component(Agent_Policy).select_action(observation)
+        selections.append(action_selection)
+
+    env.step(selections)
+    record_step(env, title="my_renderer_run", selected_actions=selections)
+```
+
+Replay the saved experiment:
+
+```python
+from word_play.presets.renderers import replay
+
+replay("path/to/experiment_log.pkl")
+```
+
+You can also run the replay CLI from the repo root:
+
+```bash
+PYTHONPATH=src python -m word_play.presets.renderers.renderer path/to/experiment_log.pkl
+```
+
+Replay controls:
+
+- Space toggles autoplay.
+- Right arrow, Enter, or keypad Enter advances one frame.
+- Left arrow goes back one frame.
+- Home jumps to the first frame.
+- End jumps to the last frame.
+- `R` restarts the replay from frame zero.
+- Left click an agent to open the agent info card.
+- Right click an agent to focus and follow its observation-sized view.
+- Right click empty space to return to the full view.
+- Escape or closing the window quits the replay.
+
 ## Presets Overview
 
 The `src/word_play/presets` folder contains reusable pieces for common
