@@ -12,6 +12,7 @@ from word_play.presets.systems.communication.chat_room_action_communication.pres
 from word_play.presets.systems.communication.trade_communication.core import (
     Trade_Offer,
     Trading_Policy,
+    _trade_offer_text,
     inventory_items,
 )
 from word_play.presets.systems.currency import Money
@@ -29,15 +30,6 @@ def _inventory_text(entity: Entity) -> str:
     if not items:
         return "empty"
     return ", ".join(f"{idx}: {item.name}" for idx, item in enumerate(items))
-
-
-def _offer_text(offer: Trade_Offer) -> str:
-    parts = []
-    if offer.items:
-        parts.append(", ".join(item.name for item in offer.items))
-    if offer.currency > 0:
-        parts.append(f"{offer.currency:g} currency")
-    return " and ".join(parts) or "nothing"
 
 
 class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
@@ -74,7 +66,7 @@ class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
         self.conversation_history.append(
             {
                 "role": "system",
-                "content": f"Trade offer from {sender.name}: {_offer_text(offer)}.",
+                "content": f"Trade offer from {sender.name}: {_trade_offer_text(offer)}.",
             }
         )
         self._trim_history()
@@ -160,7 +152,7 @@ class Human_Trading_Policy(Human_Communication_Policy, Trading_Policy):
         return {recipient.name: self._terminal_offer(recipient) for recipient in recipients}
 
     def receive_trade_offer(self, offer: Trade_Offer, sender: Entity, env: Environment) -> None:
-        print(f"Trade offer from {sender.name}: {_offer_text(offer)}")
+        print(f"Trade offer from {sender.name}: {_trade_offer_text(offer)}")
 
     def end_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         if info:
