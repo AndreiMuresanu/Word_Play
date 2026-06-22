@@ -167,9 +167,6 @@ class Trading_Policy(Communication_Policy):
         super().__init__(*args, **kwargs)
         self.in_trade = False
 
-    def post_actions_step(self, env: Environment) -> None:
-        self.in_trade = False
-
     @abstractmethod
     def start_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         pass

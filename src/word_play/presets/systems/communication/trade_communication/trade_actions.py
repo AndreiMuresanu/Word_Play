@@ -223,6 +223,10 @@ class Public_Trade_Offer(Component):
                 money.add(self.currency)
 
         self.clear()
+        if owner is not None:
+            policy = owner.get_component(Trading_Policy)
+            if policy is not None:
+                policy.in_trade = False
 
     def take_offer(self, env: Environment | None = None) -> Trade_Offer:
         offer = Trade_Offer(list(self.items), self.currency, self.request_text)
