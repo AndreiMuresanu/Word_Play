@@ -78,6 +78,28 @@ class Inventory(Component):
         self.inventory: list[Entity] = []
         self.starting_inventory = starting_inventory or []
 
+    def add(self, item: Entity, env: Environment | None = None) -> bool:
+        """Add an item to the inventory. Returns True if stored, False if no room.
+
+        Sets the ``in_inventory`` tag and, if ``env`` is given and the item
+        isn't yet registered, instantiates it in the environment.
+        """
+        if not (self.inventory_size < 0 or len(self.inventory) < self.inventory_size):
+            return False
+        self.inventory.append(item)
+        if "in_inventory" not in item.tags:
+            item.tags.append("in_inventory")
+        if env is not None and item not in env.state.entities:
+            env.instantiate_entity(item)
+        return True
+
+    def remove(self, item: Entity) -> Entity | None:
+        """Remove an item from the inventory. Returns the item, or ``None`` if it wasn't present."""
+        if item not in self.inventory:
+            return None
+        self.inventory.remove(item)
+        return item
+
     def on_instantiation(self, env: Environment, seed: int | None) -> None:
         for entity in self.starting_inventory:
             entity.position = deepcopy(self.entity.position)

@@ -42,7 +42,7 @@ def _add_item(entity: Entity, item: Entity, env: Environment) -> bool:
     inventory = entity.get_component(Inventory)
     if inventory is None:
         return False
-    return inventory.store(item, env)
+    return inventory.add(item, env)
 
 
 def _move_currency(sender: Entity, recipient: Entity, amount: float) -> float:

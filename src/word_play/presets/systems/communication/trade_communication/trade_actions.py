@@ -216,7 +216,7 @@ class Public_Trade_Offer(Component):
             inventory = owner.get_component(Inventory)
             if inventory is not None:
                 for item in self.items:
-                    inventory.store(item, env)
+                    inventory.add(item, env)
 
             money = owner.get_component(Money)
             if money is not None and self.currency > 0:
