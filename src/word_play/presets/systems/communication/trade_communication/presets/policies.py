@@ -189,6 +189,3 @@ class Human_Trading_Policy(Human_Communication_Policy, Trading_Policy):
 def _money_amount(entity: Entity) -> float:
     money = entity.get_component(Money)
     return 0 if money is None else money.amount
-
-
-Simple_Trading_Policy = LLM_Trading_Policy
