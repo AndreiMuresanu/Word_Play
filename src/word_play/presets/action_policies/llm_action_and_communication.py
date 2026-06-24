@@ -97,10 +97,12 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
             last_raw = raw
             try:
                 action_selection = self._parse_selection(raw, observation)
+                action_choice_idx = self._action_choice_idx(action_selection, observation)
                 self._record_observation(observation)
                 info = {
                     "raw_response": raw,
                     "reasoning": reasoning,
+                    "action_choice_idx": action_choice_idx,
                     "attempt": attempt + 1,
                 }
                 self._record_last_selection(action_selection, info)
@@ -307,6 +309,12 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
 
         return action_selection
 
+    def _action_choice_idx(self, action_selection: Action_Selection, observation: Observation) -> int | None:
+        for idx, candidate in enumerate(observation.possible_actions):
+            if candidate is action_selection:
+                return idx
+        return None
+
     def _extract_json(self, text: str) -> dict:
         text = re.sub(r"```(?:json)?\s*", "", text).strip()
         match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -338,6 +346,8 @@ class LLM_Action_And_Communication_Policy(Agent_Policy, Communication_Policy):
     def _coerce_kwarg_value(self, value: Any) -> str:
         if isinstance(value, str):
             return value
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return str(value)
         return json.dumps(value)
