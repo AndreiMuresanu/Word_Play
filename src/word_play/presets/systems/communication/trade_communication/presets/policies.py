@@ -1,28 +1,23 @@
 from __future__ import annotations
 
-from typing import Any
-
 from word_play.core import Entity, Environment
 from word_play.presets.action_policies.llm_action_and_communication import (
     LLM_Action_And_Communication_Policy,
 )
+from word_play.presets.human_io import Human_Text_Request
 from word_play.presets.systems.communication.chat_room_action_communication.presets.policies import (
     Human_Communication_Policy,
 )
 from word_play.presets.systems.communication.trade_communication.core import (
+    Offers_By_Recipient,
     Trade_Offer,
     Trading_Policy,
-    _trade_offer_text,
-    inventory_items,
+    offer_from_payload,
+    resolve_item_indices,
+    trade_offer_text,
 )
-from word_play.presets.systems.currency import Money
-
-
-def _money_text(entity: Entity) -> str:
-    money = entity.get_component(Money)
-    if money is None:
-        return "none"
-    return f"{money.amount:g} {money.currency_name}"
+from word_play.presets.systems.currency import Money, money_amount
+from word_play.presets.systems.inventory import inventory_items
 
 
 def _inventory_text(entity: Entity) -> str:
@@ -33,10 +28,6 @@ def _inventory_text(entity: Entity) -> str:
 
 
 class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.in_trade = False
-
     def start_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         if info:
             self.conversation_history.append({"role": "system", "content": info})
@@ -47,26 +38,15 @@ class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
         recipients: list[Entity],
         env: Environment,
         info: str | None = None,
-    ) -> Trade_Offer | dict[str, dict[str, Any]]:
-        prompt = self._trade_offer_prompt(recipients, env, info)
-        raw = self.model.generate_text(
-            self._with_system(prompt),
-            self.action_generation_config,
-            max_new_tokens=self.action_max_new_tokens,
-        ).strip()
-        parsed = self._extract_json(raw)
-        if len(recipients) <= 1:
-            return self._offer_payload(parsed)
-        return {
-            recipient.name: self._offer_payload(parsed.get(recipient.name, {}))
-            for recipient in recipients
-        }
+    ) -> Offers_By_Recipient:
+        parsed = self._request_offer_json(recipients, env, info)
+        return {recipient: offer_from_payload(parsed, self.entity, recipient) for recipient in recipients}
 
     def receive_trade_offer(self, offer: Trade_Offer, sender: Entity, env: Environment) -> None:
         self.conversation_history.append(
             {
                 "role": "system",
-                "content": f"Trade offer from {sender.name}: {_trade_offer_text(offer)}.",
+                "content": f"Trade offer from {sender.name}: {trade_offer_text(offer)}.",
             }
         )
         self._trim_history()
@@ -76,12 +56,27 @@ class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
             self.conversation_history.append({"role": "system", "content": info})
             self._trim_history()
 
+    def _request_offer_json(self, recipients: list[Entity], env: Environment, info: str | None) -> dict:
+        # Retry on malformed JSON like select_action; fall back to an empty (no-change) offer rather than aborting.
+        prompt = self._trade_offer_prompt(recipients, env, info)
+        for _ in range(self.MAX_ATTEMPTS):
+            raw = self.model.generate_text(
+                self._with_system(prompt),
+                self.action_generation_config,
+                max_new_tokens=self.action_max_new_tokens,
+            ).strip()
+            try:
+                return self._extract_json(raw)
+            except Exception as exc:
+                prompt = self._retry_prompt(prompt, raw, str(exc))
+        return {}
+
     def _trade_offer_prompt(self, recipients: list[Entity], env: Environment, info: str | None) -> str:
         recipient_names = ", ".join(entity.name for entity in recipients)
         recipient_blocks = []
         for recipient in recipients:
             recipient_blocks.append(
-                f"{recipient.name}: inventory={_inventory_text(recipient)}; money={_money_text(recipient)}"
+                f"{recipient.name}: inventory={_inventory_text(recipient)}; money={recipient.get_component(Money) or 'none'}"
             )
         recipient_text = "\n".join(recipient_blocks) or "none"
         history = (
@@ -106,7 +101,7 @@ class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
             "A blank item list and 0 currency means keep your current offer, so use that sparingly.\n\n"
             f"Your character: {self.entity.name}\n"
             f"Your inventory: {_inventory_text(self.entity)}\n"
-            f"Your money: {_money_text(self.entity)}\n"
+            f"Your money: {self.entity.get_component(Money) or 'none'}\n"
             f"Recipients: {recipient_names}\n"
             f"Recipient state:\n{recipient_text}\n"
             f"{info_text}"
@@ -116,76 +111,44 @@ class LLM_Trading_Policy(LLM_Action_And_Communication_Policy, Trading_Policy):
             "Your JSON:"
         )
 
-    def _offer_payload(self, parsed: Any) -> dict[str, Any]:
-        if not isinstance(parsed, dict):
-            return {"items": [], "currency": 0}
-        items = parsed.get("items", "")
-        if isinstance(items, list):
-            items = ", ".join(str(item) for item in items)
-        try:
-            currency = int(parsed.get("currency", 0) or 0)
-        except (TypeError, ValueError):
-            currency = 0
-        return {"items": items, "currency": max(0, currency)}
-
 
 class Human_Trading_Policy(Human_Communication_Policy, Trading_Policy):
-    MAX_ATTEMPTS = 10
-
-    def __init__(self):
-        Trading_Policy.__init__(self)
-
     def start_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         if info:
-            print(info)
+            self.io.notify(info, env=env)
 
     def send_trade_offer(
-        self,
-        recipients: list[Entity],
-        env: Environment,
-        info: str | None = None,
-    ) -> Trade_Offer | dict[str, Trade_Offer]:
+        self, recipients: list[Entity], env: Environment, info: str | None = None
+    ) -> Offers_By_Recipient:
         if info:
-            print(info)
-        if len(recipients) <= 1:
-            return self._terminal_offer(recipients[0] if recipients else None)
-        return {recipient.name: self._terminal_offer(recipient) for recipient in recipients}
+            self.io.notify(info, env=env)
+        return {recipient: self._terminal_offer(recipient, env) for recipient in recipients}
 
     def receive_trade_offer(self, offer: Trade_Offer, sender: Entity, env: Environment) -> None:
-        print(f"Trade offer from {sender.name}: {_trade_offer_text(offer)}")
+        self.io.notify(f"Trade offer from {sender.name}: {trade_offer_text(offer)}", env=env)
 
     def end_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
         if info:
-            print(info)
+            self.io.notify(info, env=env)
 
-    def _terminal_offer(self, recipient: Entity | None = None) -> Trade_Offer:
-        recipient_text = f" to {recipient.name}" if recipient is not None else ""
+    def _terminal_offer(self, recipient: Entity, env: Environment) -> Trade_Offer:
         items = inventory_items(self.entity)
-        print(f"Your inventory: {', '.join(f'{idx}: {item.name}' for idx, item in enumerate(items)) or 'empty'}")
-        item_text = input(f"Item indices to offer{recipient_text}, comma-separated or blank: ")
-        item_indices = self._parse_item_indices(item_text, len(items))
-        money_amount = _money_amount(self.entity)
-        currency_text = input(f"Currency to offer from 0 to {money_amount:g}: ")
-        currency = self._parse_currency(currency_text, money_amount)
-        return Trade_Offer(items=[items[idx] for idx in item_indices], currency=currency)
+        item_text = self.io.request_text(
+            Human_Text_Request(
+                observation_text=f"Your inventory: {_inventory_text(self.entity)}",
+                prompt=f"Item indices to offer to {recipient.name}, comma-separated or blank: ",
+            ),
+            env=env,
+        )
+        offered = resolve_item_indices([int(t) for t in item_text.split(",") if t.strip().isdigit()], items)
 
-    def _parse_item_indices(self, text: str, item_count: int) -> list[int]:
-        if not text.strip():
-            return []
-        indices = [int(part.strip()) for part in text.split(",") if part.strip()]
-        if not all(0 <= idx < item_count for idx in indices):
-            raise ValueError("Selected item index is outside your inventory.")
-        return indices
-
-    def _parse_currency(self, text: str, available: float) -> int:
-        if not text.strip():
-            return 0
-        amount = int(text)
-        if amount < 0 or amount > available:
-            raise ValueError(f"Currency must be from 0 to {available:g}.")
-        return amount
-
-
-def _money_amount(entity: Entity) -> float:
-    money = entity.get_component(Money)
-    return 0 if money is None else money.amount
+        available = money_amount(self.entity)
+        currency_text = self.io.request_text(
+            Human_Text_Request(observation_text="", prompt=f"Currency to offer (0 to {available:g}): "),
+            env=env,
+        ).strip()
+        try:
+            currency = min(max(0.0, float(currency_text or 0)), available)
+        except ValueError:
+            currency = 0.0
+        return Trade_Offer(items=offered, currency=currency)

@@ -7,7 +7,7 @@ from typing import Any
 from word_play.core import Entity, Environment
 from word_play.presets.systems.communication.core import Communication_Policy
 from word_play.presets.systems.currency import Money
-from word_play.presets.systems.inventory import Inventory
+from word_play.presets.systems.inventory import Inventory, inventory_has_room, inventory_items
 
 
 @dataclass
@@ -17,32 +17,20 @@ class Trade_Offer:
     request_text: str = ""
 
 
-def inventory_items(entity: Entity) -> list[Entity]:
-    inventory = entity.get_component(Inventory)
-    if inventory is None:
-        return []
-    return list(inventory.inventory)
+# A policy's per-round output: the offer it is making to each recipient.
+Offers_By_Recipient = dict[Entity, Trade_Offer]
 
 
-def can_receive_trade_items(entity: Entity, count: int = 1) -> bool:
-    inventory = entity.get_component(Inventory)
-    if inventory is None:
-        return False
-    return inventory.inventory_size < 0 or len(inventory.inventory) + count <= inventory.inventory_size
-
-
-def _remove_item(entity: Entity, item: Entity) -> Entity | None:
-    inventory = entity.get_component(Inventory)
-    if inventory is None:
-        return None
-    return inventory.remove(item)
-
-
-def _add_item(entity: Entity, item: Entity, env: Environment) -> bool:
-    inventory = entity.get_component(Inventory)
-    if inventory is None:
-        return False
-    return inventory.add(item, env)
+def resolve_item_indices(indices: list[int], items: list[Entity], *, on_invalid: str = "skip") -> list[Entity]:
+    """Map indices to items, order-preserving and de-duplicated. on_invalid='raise' rejects bad indices."""
+    resolved: list[Entity] = []
+    for idx in indices:
+        if 0 <= idx < len(items):
+            if items[idx] not in resolved:
+                resolved.append(items[idx])
+        elif on_invalid == "raise":
+            raise ValueError("Selected item index is outside your inventory.")
+    return resolved
 
 
 def _move_currency(sender: Entity, recipient: Entity, amount: float) -> float:
@@ -52,16 +40,14 @@ def _move_currency(sender: Entity, recipient: Entity, amount: float) -> float:
     recipient_money = recipient.get_component(Money)
     if sender_money is None or recipient_money is None:
         return 0
-    moved = sender_money.subtract(amount)
-    recipient_money.add(moved)
-    return moved
+    return sender_money.transfer_to(recipient_money, amount)
 
 
 def _trade_offer_is_empty(offer: Trade_Offer | None) -> bool:
     return offer is None or (not offer.items and offer.currency <= 0 and not offer.request_text.strip())
 
 
-def _trade_offer_text(offer: Trade_Offer | None) -> str:
+def trade_offer_text(offer: Trade_Offer | None) -> str:
     if offer is None or (not offer.items and offer.currency <= 0):
         return "nothing"
     parts = []
@@ -72,92 +58,62 @@ def _trade_offer_text(offer: Trade_Offer | None) -> str:
     return " and ".join(parts)
 
 
-def _offer_from_payload(payload: Any, sender: Entity, recipient: Entity | None = None) -> Trade_Offer:
+def offer_from_payload(payload: Any, sender: Entity, recipient: Entity | None = None) -> Trade_Offer:
+    """Normalize a raw payload (dict or Trade_Offer) into a Trade_Offer; handles flat and per-recipient nested dicts."""
     if isinstance(payload, Trade_Offer):
         return payload
     if not isinstance(payload, dict):
         return Trade_Offer()
-
     if recipient is not None and recipient.name in payload and "items" not in payload:
-        return _offer_from_payload(payload[recipient.name], sender, recipient)
+        return offer_from_payload(payload[recipient.name], sender, recipient)
 
-    raw_items = payload.get("items", [])
+    raw_items = payload.get("items") or []
     if isinstance(raw_items, str):
-        indices = [part.strip() for part in raw_items.split(",") if part.strip()]
-        raw_items = indices
-    elif raw_items is None:
-        raw_items = []
+        raw_items = [part.strip() for part in raw_items.split(",") if part.strip()]
 
-    sender_inventory = inventory_items(sender)
+    inventory = inventory_items(sender)
     items: list[Entity] = []
-    for raw_item in raw_items:
-        if isinstance(raw_item, Entity):
-            items.append(raw_item)
-            continue
-        try:
-            item_idx = int(raw_item)
-        except (TypeError, ValueError):
-            item_idx = None
-        if item_idx is not None and 0 <= item_idx < len(sender_inventory):
-            items.append(sender_inventory[item_idx])
-            continue
-        matching_item = next((item for item in sender_inventory if item.name == str(raw_item)), None)
-        if matching_item is not None:
-            items.append(matching_item)
+    for raw in raw_items:
+        if isinstance(raw, Entity):
+            item = raw
+        else:
+            try:
+                idx = int(raw)
+            except (TypeError, ValueError):
+                idx = None
+            item = inventory[idx] if idx is not None and 0 <= idx < len(inventory) else (
+                next((it for it in inventory if it.name == str(raw)), None)
+            )
+        if item is not None and item not in items:
+            items.append(item)
 
     try:
         currency = float(payload.get("currency", 0) or 0)
     except (TypeError, ValueError):
         currency = 0
-
     return Trade_Offer(items=items, currency=max(0, currency), request_text=str(payload.get("request", "")))
 
 
-def _trade_round_info(
-    speaker: Entity,
-    recipients: list[Entity],
-    current_offers: dict[Entity, dict[Entity, Trade_Offer]],
-    round_idx: int,
-    trade_duration: int,
-) -> str:
-    standing = []
-    for recipient in recipients:
-        offer = current_offers.get(speaker, {}).get(recipient)
-        standing.append(f"to {recipient.name}: {_trade_offer_text(offer)}")
+def _offer_summary(speaker, recipients, current_offers) -> tuple[str, str]:
+    outgoing = "; ".join(f"to {r.name}: {trade_offer_text(current_offers.get(speaker, {}).get(r))}" for r in recipients)
+    incoming = "; ".join(f"from {r.name}: {trade_offer_text(current_offers.get(r, {}).get(speaker))}" for r in recipients)
+    return outgoing or "nothing", incoming or "nothing"
 
-    incoming = []
-    for other in recipients:
-        offer = current_offers.get(other, {}).get(speaker)
-        incoming.append(f"from {other.name}: {_trade_offer_text(offer)}")
 
+def _trade_round_info(speaker, recipients, current_offers, round_idx, trade_duration) -> str:
+    standing, incoming = _offer_summary(speaker, recipients, current_offers)
     return (
         f"Trade round {round_idx + 1}/{trade_duration}. "
-        f"Your current standing offer: {'; '.join(standing) or 'nothing'}. "
-        f"Current offers to you: {'; '.join(incoming) or 'nothing'}. "
+        f"Your current standing offer: {standing}. Current offers to you: {incoming}. "
         "Make a revised proposal this round: add an item, remove an item, swap an item, or change currency. "
         "Only leave it empty if repeating your current standing offer is truly the best move."
     )
 
 
-def _trade_message_info(
-    speaker: Entity,
-    recipients: list[Entity],
-    current_offers: dict[Entity, dict[Entity, Trade_Offer]],
-) -> str:
-    outgoing = []
-    for recipient in recipients:
-        offer = current_offers.get(speaker, {}).get(recipient)
-        outgoing.append(f"to {recipient.name}: {_trade_offer_text(offer)}")
-
-    incoming = []
-    for other in recipients:
-        offer = current_offers.get(other, {}).get(speaker)
-        incoming.append(f"from {other.name}: {_trade_offer_text(offer)}")
-
+def _trade_message_info(speaker, recipients, current_offers) -> str:
+    outgoing, incoming = _offer_summary(speaker, recipients, current_offers)
     return (
-        "This is a trade negotiation. "
-        f"Your offer: {'; '.join(outgoing) or 'nothing'}. "
-        f"Offers to you: {'; '.join(incoming) or 'nothing'}. "
+        f"This is a trade negotiation. Your offer: {outgoing}. Offers to you: {incoming}. "
         "Send one short message about the deal."
     )
 
@@ -168,47 +124,38 @@ class Trading_Policy(Communication_Policy):
         self.in_trade = False
 
     @abstractmethod
-    def start_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
-        pass
+    def start_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None: ...
 
     @abstractmethod
-    def send_trade_offer(
-        self,
-        recipients: list[Entity],
-        env: Environment,
-        info: str | None = None,
-    ) -> Trade_Offer | dict[str, Trade_Offer] | dict[str, Any]:
-        pass
+    def send_trade_offer(self, recipients: list[Entity], env: Environment, info: str | None = None) -> Offers_By_Recipient: ...
 
     @abstractmethod
-    def receive_trade_offer(self, offer: Trade_Offer, sender: Entity, env: Environment) -> None:
-        pass
+    def receive_trade_offer(self, offer: Trade_Offer, sender: Entity, env: Environment) -> None: ...
 
     @abstractmethod
-    def end_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None:
-        pass
-
-
-def _trading_policy(entity: Entity) -> Trading_Policy | None:
-    return entity.get_component(Trading_Policy)
+    def end_trade(self, participants: list[Entity], env: Environment, info: str | None = None) -> None: ...
 
 
 def in_trade(entity: Entity) -> bool:
-    policy = _trading_policy(entity)
+    policy = entity.get_component(Trading_Policy)
     return bool(policy is not None and policy.in_trade)
 
 
 def _transfer_offer(sender: Entity, recipient: Entity, offer: Trade_Offer, env: Environment) -> Trade_Offer:
+    sender_inventory = sender.get_component(Inventory)
+    recipient_inventory = recipient.get_component(Inventory)
+
     moved_items = []
-    for item in offer.items:
-        if not can_receive_trade_items(recipient):
-            continue
-        if _remove_item(sender, item) is None:
-            continue
-        if _add_item(recipient, item, env):
-            moved_items.append(item)
-        else:
-            _add_item(sender, item, env)
+    if sender_inventory is not None and recipient_inventory is not None:
+        for item in offer.items:
+            if not inventory_has_room(recipient):
+                continue
+            if sender_inventory.remove(item) is None:
+                continue
+            if recipient_inventory.add(item, env):
+                moved_items.append(item)
+            else:
+                sender_inventory.add(item, env)
 
     moved_currency = _move_currency(sender, recipient, offer.currency)
     return Trade_Offer(items=moved_items, currency=moved_currency, request_text=offer.request_text)
@@ -231,11 +178,23 @@ def _initial_offer_entities(
             recipient = recipient_key if isinstance(recipient_key, Entity) else by_name.get(str(recipient_key))
             if recipient is None or recipient is sender:
                 continue
-            offer = _offer_from_payload(payload, sender, recipient)
+            offer = offer_from_payload(payload, sender, recipient)
             if not _trade_offer_is_empty(offer):
                 offers.setdefault(sender, {})[recipient] = offer
-
     return offers
+
+
+def _settle_trades(current_offers: dict[Entity, dict[Entity, Trade_Offer]], env: Environment) -> list[dict[str, Any]]:
+    transfers: list[dict[str, Any]] = []
+    for sender, recipient_offers in current_offers.items():
+        for recipient, offer in recipient_offers.items():
+            moved = _transfer_offer(sender, recipient, offer, env)
+            if moved.items or moved.currency > 0:
+                transfers.append(
+                    {"from": sender.name, "to": recipient.name,
+                     "items": [item.name for item in moved.items], "currency": moved.currency}
+                )
+    return transfers
 
 
 def sim_simple_trade(
@@ -244,77 +203,67 @@ def sim_simple_trade(
     initial_offers: dict[str | Entity, dict[str | Entity, Trade_Offer | dict[str, Any]]] | None = None,
     trade_duration: int = 3,
 ) -> dict[str, Any]:
-    policies = {participant: _trading_policy(participant) for participant in participants}
+    policies = {participant: participant.get_component(Trading_Policy) for participant in participants}
     if any(policy is None for policy in policies.values()):
-        return {"error": "All trade participants need a Trading_Policy."}
+        raise ValueError("All trade participants need a Trading_Policy.")
+    trade_duration = max(0, trade_duration)
 
-    trade_info = f"Starting trade negotiation with {[participant.name for participant in participants]}."
+    names = [participant.name for participant in participants]
+    trade_info = f"Starting trade negotiation with {names}."
     current_offers = _initial_offer_entities(participants, initial_offers)
 
-    print(f"====== Starting trade with: {[participant.name for participant in participants]} ======")
+    print(f"====== Starting trade with: {names} ======")
     for sender, recipient_offers in current_offers.items():
         for recipient, offer in recipient_offers.items():
-            print(f"Initial offer from {sender.name} to {recipient.name}: {_trade_offer_text(offer)}")
+            print(f"Initial offer from {sender.name} to {recipient.name}: {trade_offer_text(offer)}")
 
-    for participant, policy in policies.items():
-        policy.in_trade = True
-        policy.start_conversation(participants, env, trade_info)
-        policy.start_trade(participants, env, trade_info)
+    try:
+        for policy in policies.values():
+            policy.in_trade = True
+            policy.start_conversation(participants, env, trade_info)
+            policy.start_trade(participants, env, trade_info)
+        for sender, recipient_offers in current_offers.items():
+            for recipient, offer in recipient_offers.items():
+                policies[recipient].receive_trade_offer(offer, sender, env)
 
-    for sender, recipient_offers in current_offers.items():
-        for recipient, offer in recipient_offers.items():
-            policies[recipient].receive_trade_offer(offer, sender, env)
-
-    for round_idx in range(trade_duration):
-        print(f"------ Trade round {round_idx + 1}/{trade_duration} ------")
-        for speaker in participants:
-            policy = policies[speaker]
-            recipients = [participant for participant in participants if participant is not speaker]
-            info = _trade_round_info(speaker, recipients, current_offers, round_idx, trade_duration)
-            raw_offer = policy.send_trade_offer(recipients, env, info)
-
-            for recipient in recipients:
-                offer = _offer_from_payload(raw_offer, speaker, recipient)
-                if _trade_offer_is_empty(offer):
-                    continue
-                current_offers.setdefault(speaker, {})[recipient] = offer
-                print(f"Trade offer from {speaker.name} to {recipient.name}: {_trade_offer_text(offer)}")
-                policies[recipient].receive_trade_offer(offer, speaker, env)
-
-            message = policy.send_message(recipients, env, _trade_message_info(speaker, recipients, current_offers))
-            print(f"{speaker.name}: {message}")
-            for recipient in recipients:
-                policies[recipient].receive_message(message, speaker, env)
-
-    transfers = []
-    for sender, recipient_offers in current_offers.items():
-        for recipient, offer in recipient_offers.items():
-            moved = _transfer_offer(sender, recipient, offer, env)
-            if moved.items or moved.currency > 0:
-                transfers.append(
-                    {
-                        "from": sender.name,
-                        "to": recipient.name,
-                        "items": [item.name for item in moved.items],
-                        "currency": moved.currency,
-                    }
+        for round_idx in range(trade_duration):
+            print(f"------ Trade round {round_idx + 1}/{trade_duration} ------")
+            for speaker in participants:
+                policy = policies[speaker]
+                recipients = [p for p in participants if p is not speaker]
+                offers = policy.send_trade_offer(
+                    recipients, env, _trade_round_info(speaker, recipients, current_offers, round_idx, trade_duration)
                 )
+                for recipient in recipients:
+                    offer = offers.get(recipient)
+                    if _trade_offer_is_empty(offer):
+                        continue
+                    current_offers.setdefault(speaker, {})[recipient] = offer
+                    print(f"Trade offer from {speaker.name} to {recipient.name}: {trade_offer_text(offer)}")
+                    policies[recipient].receive_trade_offer(offer, speaker, env)
+                message = policy.send_message(recipients, env, _trade_message_info(speaker, recipients, current_offers))
+                print(f"{speaker.name}: {message}")
+                for recipient in recipients:
+                    policies[recipient].receive_message(message, speaker, env)
 
-    summary = {"transfers": transfers}
-    print("------ Trade settlement ------")
-    if transfers:
+        transfers = _settle_trades(current_offers, env)
+        summary = {"transfers": transfers}
+        print("------ Trade settlement ------")
         for transfer in transfers:
-            items_text = ", ".join(transfer["items"]) if transfer["items"] else "no items"
-            print(
-                f"{transfer['from']} -> {transfer['to']}: "
-                f"{items_text} and {transfer['currency']:g} currency"
-            )
-    else:
-        print("No transfers.")
-    for participant, policy in policies.items():
-        policy.end_trade(participants, env, str(summary))
-        policy.end_conversation(participants, env, str(summary))
-        policy.in_trade = False
+            items_text = ", ".join(transfer["items"]) or "no items"
+            print(f"{transfer['from']} -> {transfer['to']}: {items_text} and {transfer['currency']:g} currency")
+        if not transfers:
+            print("No transfers.")
 
-    print(f"====== Ending trade with: {[participant.name for participant in participants]} ======")
-    return summary
+        for policy in policies.values():
+            policy.end_trade(participants, env, str(summary))
+            policy.end_conversation(participants, env, str(summary))
+            policy.in_trade = False
+        print(f"====== Ending trade with: {names} ======")
+        return summary
+    finally:
+        # Guarantee no participant is left stuck mid-trade if a round/settlement raised.
+        for policy in policies.values():
+            if policy is not None and policy.in_trade:
+                policy.end_conversation(participants, env, "")
+                policy.in_trade = False

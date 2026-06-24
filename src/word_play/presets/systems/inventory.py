@@ -119,3 +119,19 @@ class Inventory(Component):
             item.tags.remove("in_inventory")
 
         self.inventory = []
+
+
+def inventory_items(entity: Entity) -> list[Entity]:
+    """Items held by an entity, or [] if it has no Inventory component."""
+    inventory = entity.get_component(Inventory)
+    if inventory is None:
+        return []
+    return list(inventory.inventory)
+
+
+def inventory_has_room(entity: Entity, count: int = 1) -> bool:
+    """Whether an entity's inventory can hold ``count`` more items. False if it has no Inventory."""
+    inventory = entity.get_component(Inventory)
+    if inventory is None:
+        return False
+    return inventory.inventory_size < 0 or len(inventory.inventory) + count <= inventory.inventory_size

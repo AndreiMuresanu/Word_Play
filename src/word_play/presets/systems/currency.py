@@ -74,3 +74,14 @@ class Has_Currency(Action_Validation):
     def is_valid(self, actor: Entity, target_entity: Entity, env: Environment) -> bool:
         money = actor.get_component(Money)
         return money is not None and money.amount > 0
+
+
+def money_amount(entity: Entity) -> float:
+    """Currency held by an entity, or 0 if it has no Money component."""
+    money = entity.get_component(Money)
+    return 0 if money is None else money.amount
+
+
+def amount_within_balance(amount: int | float, actor: Entity, target_entity: Entity, env: Environment) -> bool:
+    """Action_Arg validator: amount is a non-bool number in [0, actor's balance]."""
+    return isinstance(amount, (int, float)) and not isinstance(amount, bool) and 0 <= amount <= money_amount(actor)
