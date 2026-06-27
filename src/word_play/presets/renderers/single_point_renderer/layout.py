@@ -101,7 +101,7 @@ _PRESETS: dict[str, dict[str, Any]] = {
     },
     "horseshoe": {
         "offsets": "horseshoe", "radius": 2.9, "floor": FLOOR_WOOD, "wall": "lit_fort_wall",
-        "carpet": "u_inside", "focal": "podium_bottom", "flags": "behind_focal", "statues": "corners", "plants": True,
+        "carpet": "disc", "focal": "podium_mouth", "flags": "flank_mouth", "statues": "corners", "plants": True,
     },
 }
 _DEFAULT_PRESET = "summit"
@@ -196,11 +196,12 @@ def _boardroom_offsets(n: int, r: float) -> list[tuple[float, float]]:
 
 
 def _horseshoe_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """U of seats opening toward the bottom (podium)."""
-    w, h = r * 1.2, r * 0.85
-    top_n = max(1, n - 2 * ((n) // 3))
-    side_n = (n - top_n + 1) // 2
-    side_n2 = n - top_n - side_n
+    """U of seats opening downward onto a podium, vertically centred."""
+    w, h = r * 1.25, r * 1.0
+    top_n = max(1, n - 2 * (n // 3))
+    side_total = n - top_n
+    side_n = (side_total + 1) // 2
+    side_n2 = side_total - side_n
 
     def interp(i, count):
         return 0.0 if count <= 1 else (((i / (count - 1)) * 2 - 1) * w)
@@ -208,11 +209,13 @@ def _horseshoe_offsets(n: int, r: float) -> list[tuple[float, float]]:
     offs = [(interp(i, top_n), -h) for i in range(top_n)]
     for i in range(side_n):
         frac = (i + 1) / (side_n + 1)
-        offs.append((-w, -h + frac * 1.7 * h))
+        offs.append((-w, -h + frac * 2.0 * h))
     for i in range(side_n2):
         frac = (i + 1) / (side_n2 + 1)
-        offs.append((w, -h + frac * 1.7 * h))
-    return offs[:n] if len(offs) >= n else offs + _ring_offsets(n - len(offs), r * 1.6)
+        offs.append((w, -h + frac * 2.0 * h))
+    offs = offs[:n] if len(offs) >= n else offs + _ring_offsets(n - len(offs), r * 1.6)
+    mean_y = sum(y for _, y in offs) / len(offs)
+    return [(x, y - mean_y) for x, y in offs]
 
 
 def _debate_offsets(n: int, r: float) -> list[tuple[float, float]]:
@@ -308,6 +311,8 @@ def _build_room(cfg: dict, n: int, bx: int, by: int) -> list[dict[str, Any]]:
         tiles.append(_tile(bx, by + top_y, TABLE))
     elif focal == "podium_bottom":
         tiles.append(_tile(bx, by + hh - 1, TABLE))
+    elif focal == "podium_mouth":
+        tiles.append(_tile(bx, by + hh - 3, TABLE))
     elif focal == "twin_podiums":
         tiles.append(_tile(bx - 1, by + top_y, TABLE))
         tiles.append(_tile(bx + 1, by + top_y, TABLE))
@@ -317,6 +322,9 @@ def _build_room(cfg: dict, n: int, bx: int, by: int) -> list[dict[str, Any]]:
     if flags == "behind_focal":
         tiles.append(_tile(bx - 2, by + top_y, FLAG_BLUE))
         tiles.append(_tile(bx + 2, by + top_y, FLAG_RED))
+    elif flags == "flank_mouth":
+        tiles.append(_tile(bx - 2, by + hh - 3, FLAG_BLUE))
+        tiles.append(_tile(bx + 2, by + hh - 3, FLAG_RED))
     elif flags == "two_sides":
         for y in (-hh + 1, hh - 1):
             tiles.append(_tile(bx - hw + 1, by + y, FLAG_BLUE))
