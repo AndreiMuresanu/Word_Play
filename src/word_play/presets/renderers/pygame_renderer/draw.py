@@ -1219,10 +1219,9 @@ def draw_speech_bubbles(
         anchor_x = entity_rect.centerx
         anchor_y = entity_rect.top + max(4, min(renderer.tile_size // 6, entity_rect.height // 3))
 
-        bubble_width = max(int(renderer.tile_size * 2.55), 140)
-        bubble_height = max(int(renderer.tile_size * 1.18), 54)
-        bubble_width = max(int(bubble_width * scale), int(140 * scale))
-        bubble_height = max(int(bubble_height * scale), int(54 * scale))
+        world_width = renderer.effect_surface.get_width()
+        world_height = renderer.effect_surface.get_height()
+
         pad_left = max(int(10 * scale), int(renderer.tile_size * 0.18 * scale))
         pad_right = max(int(10 * scale), int(renderer.tile_size * 0.18 * scale))
         pad_top = max(int(8 * scale), int(renderer.tile_size * 0.14 * scale))
@@ -1230,25 +1229,30 @@ def draw_speech_bubbles(
         tail_width = max(int(14 * scale), int(renderer.tile_size * 0.5 * scale))
         tail_height = max(int(10 * scale), int(renderer.tile_size * 0.26 * scale))
         radius = max(int(10 * scale), int(renderer.tile_size * 0.24 * scale))
-        text_max_width = bubble_width - pad_left - pad_right
+
+        # Dynamic sizing: the bubble hugs its text. Long messages wrap at a cap
+        # that tightens as more agents speak at once (so crowded scenes stay
+        # readable); short messages get correspondingly small bubbles.
+        crowd_factor = 1.0 if concurrent <= 2 else max(0.55, 1.0 - (concurrent - 2) * 0.06)
+        max_content_width = max(
+            int(renderer.tile_size * 2.0 * scale),
+            int(min(world_width * 0.5, renderer.tile_size * 7.0) * scale * crowd_factor),
+        )
         speech_font, lines = fit_wrapped_text_lines(
             list(renderer.speech_fonts[:-1]) if len(renderer.speech_fonts) > 1 else renderer.speech_fonts,
             text,
-            max_width=text_max_width,
+            max_width=max_content_width,
             max_lines=3,
         )
         text_surfaces = [speech_font.render(line, True, (18, 16, 14)) for line in lines]
         text_width = max(surface.get_width() for surface in text_surfaces)
         line_gap = max(1, int(renderer.tile_size * 0.02))
         text_height = sum(surface.get_height() for surface in text_surfaces) + max(0, len(text_surfaces) - 1) * line_gap
-        bubble_width = max(bubble_width, text_width + pad_left + pad_right)
-        bubble_height = max(
-            bubble_height,
-            text_height + pad_top + pad_bottom,
-            int(renderer.tile_size * (0.78 + 0.28 * len(lines))),
-        )
-        world_width = renderer.effect_surface.get_width()
-        world_height = renderer.effect_surface.get_height()
+
+        min_content_width = max(tail_width + 6, int(renderer.tile_size * 0.9 * scale))
+        content_w = max(min_content_width, min(text_width, max_content_width))
+        bubble_width = content_w + pad_left + pad_right
+        bubble_height = max(int(renderer.tile_size * 0.66 * scale), text_height + pad_top + pad_bottom)
 
         # Default: a bubble floats just above its speaker's head (single speaker).
         baseline_cx = float(anchor_x)
