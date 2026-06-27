@@ -1,4 +1,15 @@
-"""SinglePointLayout — pick a mode, it just works."""
+"""SinglePointLayout — pick a preset, get a beautiful single-point chamber.
+
+A single-point environment has every agent sharing one logical position.  This
+layout fans the agents out into an arrangement (ring, two debating benches,
+tiered senate, …) and dresses the chamber around them — marble floors, a red
+carpet, a throne or podium, flanking statues and standards — so a static frame
+reads like a summit, a senate, or a debate hall.
+
+The single-point renderer draws *only agent entities*; every other element
+(floor, carpet, focal piece, statues, flags) is emitted as background tiles by
+this layout, so the agents are always the subject of the frame.
+"""
 from __future__ import annotations
 
 import math
@@ -12,6 +23,31 @@ if TYPE_CHECKING:
     from word_play.core import Environment, Render_Context
 
 
+# ═══════════════════════════════════════════════════════════════════
+# Sprite palette
+# ═══════════════════════════════════════════════════════════════════
+
+_MISC = "sprite_library/src/items/materials/misc"
+_FLOORS = "sprite_library/src/world_tiles/indoors/floors"
+_WALLS = "sprite_library/src/world_tiles/indoors/wall_sets"
+
+FLOOR_MARBLE = f"{_FLOORS}/day_tile_floor_c.png"   # cool blue stone — civic / marble
+FLOOR_WOOD = f"{_FLOORS}/wooden_floor.png"          # warm wood — chambers
+FLOOR_STONE = f"{_FLOORS}/day_stone_floor_c.png"
+
+CARPET = f"{_MISC}/red_carpet_c.png"
+THRONE = f"{_MISC}/throne.png"
+STATUE = f"{_MISC}/statue.png"
+MOUNTED_STATUE = f"{_MISC}/mounted_statue.png"
+PLANT = f"{_MISC}/potted_plants.png"
+CANDLE = f"{_MISC}/wax_candle.png"
+CHAIR_L = f"{_MISC}/wooden_chair_left.png"
+CHAIR_R = f"{_MISC}/wooden_chair_right.png"
+TABLE = "sprite_library/src/world_tiles/indoors/furniture/table_wood.png"
+FLAG_RED = "sprite_library/src/items/special/flag_red.png"
+FLAG_BLUE = "sprite_library/src/items/special/flag_blue.png"
+
+
 @dataclass
 class _State:
     cached_background: list[dict[str, Any]] | None = None
@@ -19,18 +55,56 @@ class _State:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Layout mode presets
+# Preset configuration
+#   offsets : how agents fan out
+#   floor   : base floor sprite
+#   wall    : wall set
+#   carpet  : "disc" | "cross" | "v_runner" | "h_runner" | "two_aisles" | None
+#   focal   : "throne_top" | "podium_top" | "long_table" | "twin_podiums" | None
+#   flags   : "behind_focal" | "two_sides" | "ring" | None
+#   statues : "flank_focal" | "corners" | "avenue" | None
+#   plants  : corners on/off
 # ═══════════════════════════════════════════════════════════════════
 
-_MODES = {
-    "ring":      {"radius": 3.5, "room": True,  "table": True},
-    "compass":   {"radius": 3.5, "room": True,  "table": True},
-    "circle":    {"radius": 3.5, "room": True,  "table": True},
-    "boardroom": {"radius": 2.5, "room": True,  "table": False},
-    "horseshoe": {"radius": 2.8, "room": True,  "table": False},
-    "auditorium":{"radius": 3.0, "room": True,  "table": False},
-    "debate":    {"radius": 2.5, "room": True,  "table": False},
+_PRESETS: dict[str, dict[str, Any]] = {
+    "summit": {
+        "offsets": "ring", "radius": 3.4, "floor": FLOOR_MARBLE, "wall": "castle_wall",
+        "carpet": "disc", "focal": "round_table", "flags": "ring", "statues": "corners", "plants": True,
+    },
+    "ring": {
+        "offsets": "ring", "radius": 3.2, "floor": FLOOR_WOOD, "wall": "lit_brick_wall",
+        "carpet": "disc", "focal": "round_table", "flags": None, "statues": "corners", "plants": True,
+    },
+    "compass": {
+        "offsets": "compass", "radius": 3.0, "floor": FLOOR_MARBLE, "wall": "lit_brick_wall",
+        "carpet": "cross", "focal": "round_table", "flags": None, "statues": "corners", "plants": True,
+    },
+    "senate": {
+        "offsets": "auditorium", "radius": 3.2, "floor": FLOOR_MARBLE, "wall": "castle_wall",
+        "carpet": "v_runner", "focal": "throne_top", "flags": "behind_focal", "statues": "flank_focal", "plants": True,
+    },
+    "auditorium": {
+        "offsets": "auditorium", "radius": 3.0, "floor": FLOOR_MARBLE, "wall": "dim_brick_wall",
+        "carpet": "v_runner", "focal": "podium_top", "flags": "behind_focal", "statues": "flank_focal", "plants": False,
+    },
+    "throne": {
+        "offsets": "audience", "radius": 3.0, "floor": FLOOR_MARBLE, "wall": "castle_wall",
+        "carpet": "v_runner", "focal": "throne_top", "flags": "behind_focal", "statues": "avenue", "plants": True,
+    },
+    "debate": {
+        "offsets": "debate", "radius": 3.0, "floor": FLOOR_MARBLE, "wall": "dim_fort_wall",
+        "carpet": "v_runner", "focal": "twin_podiums", "flags": "two_sides", "statues": "flank_focal", "plants": True,
+    },
+    "boardroom": {
+        "offsets": "boardroom", "radius": 2.8, "floor": FLOOR_WOOD, "wall": "lit_brick_wall",
+        "carpet": "h_runner", "focal": "long_table", "flags": "behind_focal", "statues": "corners", "plants": True,
+    },
+    "horseshoe": {
+        "offsets": "horseshoe", "radius": 2.9, "floor": FLOOR_WOOD, "wall": "lit_fort_wall",
+        "carpet": "u_inside", "focal": "podium_bottom", "flags": "behind_focal", "statues": "corners", "plants": True,
+    },
 }
+_DEFAULT_PRESET = "summit"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -38,409 +112,326 @@ _MODES = {
 # ═══════════════════════════════════════════════════════════════════
 
 def _ring_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """Evenly spaced circle.  Y compressed 0.7× for isometric feel."""
-    return [(r * math.cos(a), r * math.sin(a) * 0.7)
+    """Evenly spaced circle; y compressed 0.72× for a faux-isometric read."""
+    if n == 1:
+        return [(0.0, 0.0)]
+    return [(r * math.cos(a), r * math.sin(a) * 0.72)
             for a in (-math.pi / 2 + 2 * math.pi * i / n for i in range(n))]
 
 
 def _compass_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """N/E/S/W for 1–4, ring beyond."""
     if n == 1: return [(0.0, 0.0)]
     if n == 2: return [(-r, 0.0), (r, 0.0)]
-    if n == 3: return [(0.0, -r), (r * 0.866, r * 0.5), (-r * 0.866, r * 0.5)]
-    if n == 4: return [(0.0, -r), (r, 0.0), (0.0, r), (-r, 0.0)]
+    if n == 3: return [(0.0, -r * 0.72), (r * 0.87, r * 0.5), (-r * 0.87, r * 0.5)]
+    if n == 4: return [(0.0, -r * 0.72), (r, 0.0), (0.0, r * 0.72), (-r, 0.0)]
     return _ring_offsets(n, r)
 
 
+def _rows_offsets(n: int, r: float, *, top: float, cols_cap: int, row_gap: float, col_gap: float) -> list[tuple[float, float]]:
+    """Centered rows that grow downward from ``top`` — used by senate/throne."""
+    if n == 0:
+        return []
+    if n == 1:
+        return [(0.0, top)]
+    cols = max(2, min(cols_cap, int(round(math.sqrt(n) * 1.5))))
+    offs: list[tuple[float, float]] = []
+    remaining, row = n, 0
+    while remaining > 0:
+        row_cols = min(cols, remaining)
+        y = top + row * row_gap
+        for c in range(row_cols):
+            x = -(row_cols - 1) * col_gap / 2 + c * col_gap
+            offs.append((x, y))
+        remaining -= row_cols
+        row += 1
+    # Center the block vertically so the crowd sits mid-chamber.
+    mean_y = sum(y for _, y in offs) / len(offs)
+    return [(x, y - mean_y) for x, y in offs]
+
+
+def _auditorium_offsets(n: int, r: float) -> list[tuple[float, float]]:
+    return _rows_offsets(n, r, top=-r * 0.2, cols_cap=8, row_gap=r * 0.62, col_gap=r * 0.5)
+
+
+def _audience_offsets(n: int, r: float) -> list[tuple[float, float]]:
+    # Tighter columns hugging the central carpet, leaving the top for the throne.
+    return _rows_offsets(n, r, top=r * 0.1, cols_cap=6, row_gap=r * 0.6, col_gap=r * 0.55)
+
+
 def _boardroom_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """Rectangular table — agents on both long sides and ends.
+    """Seats along both long sides of a central table, then the two heads."""
+    w, h = r * 1.5, r * 0.7
+    per_side = max(1, (n - 2 + 1) // 2) if n > 2 else (n + 1) // 2
 
-    Layout (top-down view):
-        ┌─────────────────┐
-        │ ○  ○  ○  ○  ○  │ ← top row  (max per_side agents)
-        │○                 ○│ ← left end (1-2)
-        │                  │
-        │○                 ○│ ← right end (1-2)
-        │ ○  ○  ○  ○  ○  │ ← bottom row
-        └─────────────────┘
-    """
-    w, h = r * 1.2, r * 0.8
-    # How many seats per long side?
-    # For n agents: roughly 40% on top, 40% on bottom, 20% on ends
-    per_side = max(1, int(n * 0.4))
-    if per_side * 2 >= n:
-        per_side = (n + 1) // 2
+    def interp(i, count):
+        return 0.0 if count <= 1 else (((i / (count - 1)) * 2 - 1) * w)
 
-    def _interp(i, count):
-        """Spread i across [-w, +w] for count items."""
-        if count <= 1:
-            return 0.0
-        return ((i / (count - 1)) * 2 - 1) * w
-
-    offs = []
+    offs: list[tuple[float, float]] = []
     remaining = n
-
-    # Top row
     top_n = min(per_side, remaining)
-    offs.extend((_interp(i, top_n), -h) for i in range(top_n))
-    remaining -= top_n
-
-    # Bottom row
+    offs += [(interp(i, top_n), -h) for i in range(top_n)]; remaining -= top_n
     bot_n = min(per_side, remaining)
-    offs.extend((_interp(i, bot_n), h) for i in range(bot_n))
-    remaining -= bot_n
-
-    # Left side (1-2 agents)
-    left_n = min(2, remaining)
-    if left_n > 0:
-        offs.extend((-w, y) for y in (-h * 0.5, h * 0.5)[:left_n])
-        remaining -= left_n
-
-    # Right side
-    right_n = min(2, remaining)
-    if right_n > 0:
-        offs.extend((w, y) for y in (-h * 0.5, h * 0.5)[:right_n])
-        remaining -= right_n
-
-    # Overflow → extra ring
+    offs += [(interp(i, bot_n), h) for i in range(bot_n)]; remaining -= bot_n
+    for hx in (-w - r * 0.35, w + r * 0.35):
+        if remaining > 0:
+            offs.append((hx, 0.0)); remaining -= 1
     if remaining > 0:
-        offs.extend(_ring_offsets(remaining, r * 1.5))
+        offs += _ring_offsets(remaining, r * 1.6)
     return offs
 
 
 def _horseshoe_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """U-shaped table, open at the bottom.
+    """U of seats opening toward the bottom (podium)."""
+    w, h = r * 1.2, r * 0.85
+    top_n = max(1, n - 2 * ((n) // 3))
+    side_n = (n - top_n + 1) // 2
+    side_n2 = n - top_n - side_n
 
-    Layout:
-        ┌─────────────────┐
-        │ ○  ○   ○   ○  ○│ ← top row
-        │○                 │ ← left column
-        │○                 │
-        │                  │ ← *open* (audience/presenter faces this way)
-        └─────────────────┘
-    """
-    w, h = r * 1.2, r * 0.7
-    per_side = max(2, int(n * 0.45))
-    if per_side * 2 > n:
-        per_side = max(2, (n + 1) // 2)
+    def interp(i, count):
+        return 0.0 if count <= 1 else (((i / (count - 1)) * 2 - 1) * w)
 
-    def _interp(i, count):
-        if count <= 1:
-            return 0.0
-        return ((i / (count - 1)) * 2 - 1) * w
-
-    offs = []
-    remaining = n
-
-    # Top row
-    top_n = min(per_side, remaining)
-    offs.extend((_interp(i, top_n), -h) for i in range(top_n))
-    remaining -= top_n
-
-    # Left column (from top toward bottom, but stopping above the gap)
-    left_n = min(per_side - 1, remaining)
-    if left_n > 0:
-        for i in range(left_n):
-            frac = (i + 1) / (left_n + 1)  # 0.33 .. 0.75
-            offs.append((-w, -h + frac * 3 * h * 0.5))
-        remaining -= left_n
-
-    # Right column
-    right_n = min(per_side - 1, remaining)
-    if right_n > 0:
-        for i in range(right_n):
-            frac = (i + 1) / (right_n + 1)
-            offs.append((w, -h + frac * 3 * h * 0.5))
-        remaining -= right_n
-
-    if remaining > 0:
-        offs.extend(_ring_offsets(remaining, r * 1.5))
-    return offs
-
-
-def _auditorium_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """Rows facing a stage.  Back rows higher (farther from stage).
-
-    Layout:
-        ┌──────────────────┐
-        │    [ S T A G E ] │ ← front (y ≈ -r)
-        │ ○ ○ ○ ○ ○ ○ ○ ○ │ ← row 1 (front)
-        │ ○ ○ ○ ○ ○ ○ ○   │ ← row 2
-        │   ○ ○ ○ ○ ○     │ ← row 3 (back, wider view but fewer seats)
-        └──────────────────┘
-    """
-    if n == 0:
-        return []
-    if n == 1:
-        return [(0.0, 0.0)]
-    if n == 2:
-        return [(-r * 0.3, 0.0), (r * 0.3, 0.0)]
-
-    cols = min(8, int(math.sqrt(n) * 1.6))
-    offs = []
-    remaining = n
-    row_spacing = r * 0.55
-    col_spacing = r * 0.35
-
-    for row_idx in range(10):  # safety cap
-        if remaining <= 0:
-            break
-        row_cols = min(cols, remaining)
-        y = r + row_idx * row_spacing  # stage at -r, rows go up
-        for c in range(row_cols):
-            x = -(row_cols - 1) * col_spacing / 2 + c * col_spacing
-            offs.append((x, y))
-        remaining -= row_cols
-    return offs
+    offs = [(interp(i, top_n), -h) for i in range(top_n)]
+    for i in range(side_n):
+        frac = (i + 1) / (side_n + 1)
+        offs.append((-w, -h + frac * 1.7 * h))
+    for i in range(side_n2):
+        frac = (i + 1) / (side_n2 + 1)
+        offs.append((w, -h + frac * 1.7 * h))
+    return offs[:n] if len(offs) >= n else offs + _ring_offsets(n - len(offs), r * 1.6)
 
 
 def _debate_offsets(n: int, r: float) -> list[tuple[float, float]]:
-    """Two sides facing each other across a gap.
-
-    Layout:
-        ○ ○ ○              ← pro side (left)
-            ○ ○ ○          ← con side (right)
-    Evenly split into left/right groups, stacked vertically.
-    """
-    w, h = r * 0.6, r * 0.8
-
-    def _row_offsets(count, x_sign):
-        if count == 0:
-            return []
-        if count == 1:
-            return [(x_sign * w, 0.0)]
-        return [(x_sign * w, ((i / (count - 1)) * 2 - 1) * h) for i in range(count)]
-
+    """Two benches facing across a central aisle."""
+    w, h = r * 0.95, r * 0.85
     left_n = (n + 1) // 2
     right_n = n - left_n
-    return _row_offsets(left_n, -1) + _row_offsets(right_n, +1)
+
+    def col(count, x):
+        if count == 0: return []
+        if count == 1: return [(x, 0.0)]
+        return [(x, (((i / (count - 1)) * 2 - 1) * h)) for i in range(count)]
+
+    return col(left_n, -w) + col(right_n, w)
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Dispatch
-# ═══════════════════════════════════════════════════════════════════
-
-_FN = {
-    "ring": _ring_offsets, "circle": _ring_offsets,
-    "compass": _compass_offsets,
-    "boardroom": _boardroom_offsets,
-    "horseshoe": _horseshoe_offsets,
-    "auditorium": _auditorium_offsets,
+_OFFSETS = {
+    "ring": _ring_offsets, "compass": _compass_offsets,
+    "auditorium": _auditorium_offsets, "audience": _audience_offsets,
+    "boardroom": _boardroom_offsets, "horseshoe": _horseshoe_offsets,
     "debate": _debate_offsets,
 }
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Room background generation
+# Room construction
 # ═══════════════════════════════════════════════════════════════════
 
-def _room_bounds(mode: str, n: int) -> tuple[int, int]:
-    """Background room dimensions (width, height) for each mode."""
-    if mode == "boardroom":
-        return (max(14, int(n * 0.8 + 2)), max(7, int(n * 0.4 + 2)))
-    if mode == "horseshoe":
-        return (max(5, int(n * 0.7 + 2)), max(5, int(n * 0.6 + 2)))
-    if mode == "auditorium":
-        return (max(7, int(n * 0.45 + 2)), max(6, int(n * 0.55 + 2)))
-    if mode == "debate":
-        return (max(5, int(n * 0.4 + 2)), max(5, int(n * 0.35 + 2)))
-    # ring / compass / circle
-    if n <= 4:  return (5, 5)
-    if n <= 8:  return (7, 7)
-    if n <= 12: return (9, 7)
-    return (11, 9)
+def _room_half_extent(cfg: dict, n: int) -> tuple[int, int]:
+    """Half-width / half-height of the chamber interior, sized to snugly fit
+    the crowd: take the actual agent offset spread and add a walking margin."""
+    fn = _OFFSETS.get(cfg["offsets"], _ring_offsets)
+    offsets = fn(max(1, n), cfg["radius"])
+    max_x = max((abs(ox) for ox, _ in offsets), default=1.0)
+    max_y = max((abs(oy) for _, oy in offsets), default=1.0)
+    # Margin leaves room for the carpet border, statues and a wall gap.
+    hw = max(4, int(math.ceil(max_x)) + 3)
+    hh = max(4, int(math.ceil(max_y)) + 3)
+    return (hw, hh)
 
 
-def _generate_room_tiles(mode: str, has_table: bool, assets: dict, n_agents: int, base_x: int, base_y: int) -> list[dict]:
-    """Generate floor + wall tiles for a single-point room."""
-    rw, rh = _room_bounds(mode, n_agents)
-    hw, hh = rw // 2, rh // 2
-    floor_sprite = assets["floor"]
-    table_sprite = assets["table"]
-    wall_set = assets["wall"]
-    tiles = []
+def _tile(x: int, y: int, sprite: str) -> dict[str, Any]:
+    return {"x": x, "y": y, "kind": "floor", "sprite": sprite}
 
-    # Floor
+
+def _build_room(cfg: dict, n: int, bx: int, by: int) -> list[dict[str, Any]]:
+    hw, hh = _room_half_extent(cfg, n)
+    tiles: list[dict[str, Any]] = []
+
+    # 1. Base floor.
     for y in range(-hh, hh + 1):
         for x in range(-hw, hw + 1):
-            # Center table for ring/compass
-            is_table = (x == 0 and y == 0 and has_table)
-            tiles.append({
-                "x": base_x + x, "y": base_y + y,
-                "kind": "floor",
-                "sprite": table_sprite if is_table else floor_sprite,
-            })
+            tiles.append(_tile(bx + x, by + y, cfg["floor"]))
 
-    # Room-type-specific floor decorations
-    if mode == "boardroom":
-        # Draw a long table in the centre
-        table_w = min(hw - 1, max(2, int(n_agents * 0.35)))
-        for tx in range(-table_w, table_w + 1):
-            tiles.append({"x": base_x + tx, "y": base_y, "kind": "floor", "sprite": table_sprite})
-    elif mode == "horseshoe":
-        # Draw a presenter podium at the open end
-        tiles.append({"x": base_x, "y": base_y + hh - 1, "kind": "floor", "sprite": table_sprite})
-    elif mode == "auditorium":
-        # Draw a stage strip at the front (y = -hh)
-        for sx in range(-hw, hw + 1):
-            tiles.append({"x": base_x + sx, "y": base_y - hh, "kind": "floor", "sprite": table_sprite})
-    elif mode == "debate":
-        # Draw a dividing line down the centre
-        for dy in range(-hh, hh + 1):
-            tiles.append({"x": base_x, "y": base_y + dy, "kind": "floor", "sprite": table_sprite})
+    # 2. Carpet.
+    carpet = cfg.get("carpet")
+    cx0 = 0
+    if carpet == "disc":
+        rad = min(hw, hh) - 1
+        for y in range(-hh, hh + 1):
+            for x in range(-hw, hw + 1):
+                if (x * x) / max(1, rad * rad) + (y * y) / max(1, (rad - 0) ** 2) <= 1.05:
+                    tiles.append(_tile(bx + x, by + y, CARPET))
+    elif carpet == "cross":
+        for d in range(-hh + 1, hh):
+            tiles.append(_tile(bx, by + d, CARPET))
+        for d in range(-hw + 1, hw):
+            tiles.append(_tile(bx + d, by, CARPET))
+    elif carpet == "v_runner":
+        for y in range(-hh + 1, hh):
+            tiles.append(_tile(bx + cx0, by + y, CARPET))
+            tiles.append(_tile(bx + cx0 - 1, by + y, CARPET))
+    elif carpet == "h_runner":
+        for x in range(-hw + 1, hw):
+            tiles.append(_tile(bx + x, by, CARPET))
+    elif carpet == "u_inside":
+        for y in range(-hh + 1, 1):
+            for x in range(-hw + 2, hw - 1):
+                tiles.append(_tile(bx + x, by + y, CARPET))
 
-    # Walls
+    # 3. Focal piece(s).
+    focal = cfg.get("focal")
+    top_y = -hh + 1
+    if focal == "round_table":
+        tiles.append(_tile(bx, by, TABLE))
+    elif focal == "long_table":
+        span = max(1, hw - 2)
+        for x in range(-span, span + 1):
+            tiles.append(_tile(bx + x, by, TABLE))
+    elif focal == "throne_top":
+        tiles.append(_tile(bx, by + top_y, THRONE))
+    elif focal == "podium_top":
+        tiles.append(_tile(bx, by + top_y, TABLE))
+    elif focal == "podium_bottom":
+        tiles.append(_tile(bx, by + hh - 1, TABLE))
+    elif focal == "twin_podiums":
+        tiles.append(_tile(bx - 1, by + top_y, TABLE))
+        tiles.append(_tile(bx + 1, by + top_y, TABLE))
+
+    # 4. Flags.
+    flags = cfg.get("flags")
+    if flags == "behind_focal":
+        tiles.append(_tile(bx - 2, by + top_y, FLAG_BLUE))
+        tiles.append(_tile(bx + 2, by + top_y, FLAG_RED))
+    elif flags == "two_sides":
+        for y in (-hh + 1, hh - 1):
+            tiles.append(_tile(bx - hw + 1, by + y, FLAG_BLUE))
+            tiles.append(_tile(bx + hw - 1, by + y, FLAG_RED))
+    elif flags == "ring":
+        for i, (fx, fy) in enumerate([(0, -hh + 1), (hw - 1, 0), (0, hh - 1), (-hw + 1, 0)]):
+            tiles.append(_tile(bx + fx, by + fy, FLAG_RED if i % 2 else FLAG_BLUE))
+
+    # 5. Statues.
+    statues = cfg.get("statues")
+    corners = [(-hw + 1, -hh + 1), (hw - 1, -hh + 1), (-hw + 1, hh - 1), (hw - 1, hh - 1)]
+    if statues == "corners":
+        for sx, sy in corners:
+            tiles.append(_tile(bx + sx, by + sy, STATUE))
+    elif statues == "flank_focal":
+        tiles.append(_tile(bx - 1, by + top_y, MOUNTED_STATUE))
+        tiles.append(_tile(bx + 1, by + top_y, MOUNTED_STATUE))
+    elif statues == "avenue":
+        for y in range(top_y + 2, hh - 1, 3):
+            tiles.append(_tile(bx - 2, by + y, STATUE))
+            tiles.append(_tile(bx + 2, by + y, STATUE))
+
+    # 6. Potted plants softening the corners.
+    if cfg.get("plants"):
+        for sx, sy in corners:
+            if not any(t["x"] == bx + sx and t["y"] == by + sy and t["sprite"] == STATUE for t in tiles):
+                tiles.append(_tile(bx + sx, by + sy, PLANT))
+
+    # 7. Walls.
+    wall_set = f"{_WALLS}/{cfg['wall']}"
     for y in range(-hh - 1, hh + 2):
         for x in range(-hw - 1, hw + 2):
-            if y == -hh - 1 or y == hh + 1 or x == -hw - 1 or x == hw + 1:
-                tiles.append({
-                    "x": base_x + x, "y": base_y + y,
-                    "kind": "wall", "wall_set": wall_set,
-                })
+            if y in (-hh - 1, hh + 1) or x in (-hw - 1, hw + 1):
+                tiles.append({"x": bx + x, "y": by + y, "kind": "wall", "wall_set": wall_set})
     return tiles
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Assets
-# ═══════════════════════════════════════════════════════════════════
-
-_MODE_ASSETS = {
-    "boardroom": {
-        "wall": "sprite_library/src/world_tiles/indoors/wall_sets/bright_brick_wall",
-        "floor": "sprite_library/src/world_tiles/floors_custom/wood_floor.png",
-        "table": "sprite_library/src/world_tiles/indoors/furniture/table_wood.png",
-    },
-    "horseshoe": {
-        "wall": "sprite_library/src/world_tiles/indoors/wall_sets/bright_fort_wall",
-        "floor": "sprite_library/src/world_tiles/indoors/floors/day_brick_floor_c.png",
-        "table": "sprite_library/src/world_tiles/indoors/furniture/table_wood.png",
-    },
-    "auditorium": {
-        "wall": "sprite_library/src/world_tiles/indoors/wall_sets/dim_brick_wall",
-        "floor": "sprite_library/src/world_tiles/indoors/floors/day_brick_floor_c.png",
-        "table": "sprite_library/src/world_tiles/indoors/stations/prep_table.png",
-    },
-    "debate": {
-        "wall": "sprite_library/src/world_tiles/indoors/wall_sets/dim_fort_wall",
-        "floor": "sprite_library/src/world_tiles/indoors/floors/day_brick_floor_c.png",
-        "table": "sprite_library/src/world_tiles/indoors/stations/prep_table.png",
-    },
-}
-
-
-def _assets(mode: str) -> dict:
-    a = _MODE_ASSETS.get(mode, {})
-    return {
-        "wall": a.get("wall", "sprite_library/src/world_tiles/indoors/wall_sets/overcooked_kitchen_wall"),
-        "floor": a.get("floor", "sprite_library/src/world_tiles/indoors/floors/day_brick_floor_c.png"),
-        "table": a.get("table", "sprite_library/src/world_tiles/indoors/stations/prep_table.png"),
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════
 # Layout adapter
 # ═══════════════════════════════════════════════════════════════════
 
-
 class SinglePointLayout(Position_Layout_Adapter):
-    """Pick a mode — everything else auto-configures.
+    """Arrange single-point agents into a dressed chamber.
 
-    Modes and how they arrange agents::
+    Presets::
 
-        ring        Evenly spaced circle.  Works for 1–∞.  Default.
+        summit      Agents ringed around a round table on a red rug, standards
+                    at the cardinal points, statues in the corners.  Marble.
+        ring        Warm-wood circular chamber with a central table.
+        compass     N/E/S/W placement on a carpet cross.  Best for ≤4.
+        senate      Tiered rows facing a throne, carpet aisle, flanking statues
+                    and standards.  Marble.
+        auditorium  Tiered rows facing a podium.  Plainer senate.
+        throne      Throne at the head, a carpet avenue lined with statues, the
+                    crowd massed along it.
+        debate      Two benches facing across a carpet aisle, blue vs red
+                    standards, twin podiums, statues at the centre line.
+        boardroom   Long table down the chamber, delegates either side, a
+                    standard and statues framing the head.
+        horseshoe   U of seats opening onto a podium.
 
-        compass     1–4: N/E/S/W slots.  5+: same as ring.  Best ≤4.
-
-        boardroom   Rectangular table.  Works 2–20.  Top+bottom rows
-                    (≈80 % of agents) + left/right ends (1–2 each).
-
-        horseshoe   U-shaped table, open at bottom.  Works 3–15.
-                    Top row + left/right columns.  Presenter faces
-                    the open end.
-
-        auditorium  Grid rows facing stage.  Works 3–40.  Columns
-                    scale with √n.  Stage rendered at front.
-
-        debate      Two facing columns even split.  Works 2–12.
-                    Dividing line down the centre.
+    The renderer draws only agent entities; the chamber is background.
     """
 
-    def __init__(self, layout_mode: str = "ring"):
-        cfg = _MODES.get(layout_mode, _MODES["ring"])
+    only_agents = True  # single-point renderer renders agent entities only
+
+    def __init__(self, layout_mode: str = _DEFAULT_PRESET):
+        cfg = _PRESETS.get(layout_mode, _PRESETS[_DEFAULT_PRESET])
+        self.layout_mode = layout_mode if layout_mode in _PRESETS else _DEFAULT_PRESET
+        self.cfg = cfg
         self.base_x = 0
         self.base_y = 0
         self.radius = cfg["radius"]
-        self.layout_mode = layout_mode
-        self.include_room = cfg["room"]
-        self.has_center_table = cfg["table"]
-        self.only_agents = False
-        asst = _assets(layout_mode)
-        self.WALL_SET = asst["wall"]
-        self.DEFAULT_FLOOR = asst["floor"]
-        self.TABLE_SPRITE = asst["table"]
+        self.DEFAULT_FLOOR = cfg["floor"]
+        self.WALL_SET = f"{_WALLS}/{cfg['wall']}"
         self.groups: list[list[str]] = []
 
-    def set_groups(self, *groups: list[str]) -> SinglePointLayout:
-        """Assign agents to sides by group.  Group 0 fills the first
-        position slots (left/top), group 1 fills the second set
-        (right/bottom), and so on.
-
-        Example::
-
-            layout = SinglePointLayout("debate")
-            layout.set_groups(["Alice", "Bob"], ["Charlie", "Dana"])
-            # → Alice, Bob on left (pro); Charlie, Dana on right (con)
-        """
+    # -- public tuning -------------------------------------------------
+    def set_groups(self, *groups: list[str]) -> "SinglePointLayout":
+        """Order agents by side/group (e.g. pro vs con for ``debate``)."""
         self.groups = [list(g) for g in groups]
         return self
 
-    def _state(self, ctx):
+    # -- single-point renders only agents ------------------------------
+    def should_render(self, entity: Any) -> bool:
+        return bool(getattr(entity, "is_agent", False))
+
+    # -- internals -----------------------------------------------------
+    def _state(self, ctx) -> _State:
         if ctx is None:
             raise ValueError("SinglePointLayout requires a Render_Context.")
         return ctx.value_for(self, _State)
 
+    def _agents(self, env) -> list[Any]:
+        ents = list(getattr(env.state, "entities", []))
+        agents = [e for e in ents if getattr(e, "is_agent", False)]
+        agents.sort(key=lambda e: e.name)
+        if self.groups:
+            order = {name: gi for gi, g in enumerate(self.groups) for name in g}
+            agents.sort(key=lambda e: (order.get(e.name, len(self.groups)), e.name))
+        return agents
+
+    # -- Position_Layout_Adapter interface -----------------------------
     def prepare_env(self, env: "Environment", context: "Render_Context | None" = None) -> None:
         if env is None:
             return
         st = self._state(context)
-        ents = list(getattr(env.state, "entities", []))
-        pos = ([e for e in ents if getattr(e, "is_agent", False)] if self.only_agents
-               else [e for e in ents if isinstance(getattr(e, "position", None), Single_Point_Position)])
-        n = len(pos)
+        agents = self._agents(env)
+        n = len(agents)
         st.offsets_by_entity.clear()
+        st.cached_background = None
         if n == 0:
             return
-        pos.sort(key=lambda e: (0 if getattr(e, "is_agent", False) else 1, e.name))
-        # Honour agent groups if set
-        if self.groups:
-            group_map: dict[str, int] = {}
-            for gi, g in enumerate(self.groups):
-                for name in g:
-                    group_map[name] = gi
-            pos.sort(key=lambda e: (group_map.get(e.name, len(self.groups)), e.name))
-        if self.include_room:
-            st.cached_background = None
-        fn = _FN.get(self.layout_mode, _ring_offsets)
+        fn = _OFFSETS.get(self.cfg["offsets"], _ring_offsets)
         offsets = fn(n, self.radius)
-        assert len(offsets) == n, f"{self.layout_mode}: got {len(offsets)} offsets for {n} agents"
-        for e, (ox, oy) in zip(pos, offsets):
-            st.offsets_by_entity[e] = (ox, oy)
+        assert len(offsets) == n, f"{self.layout_mode}: {len(offsets)} offsets for {n} agents"
+        for e, off in zip(agents, offsets):
+            st.offsets_by_entity[e] = off
 
     def background(self, env, positioned_entities, context=None):
-        if not self.include_room:
-            return []
         st = self._state(context)
         if st.cached_background is not None:
             return st.cached_background
         if env is None:
             return []
-        n = len([e for e in getattr(env.state, "entities", []) if getattr(e, "is_agent", False)])
+        n = len(self._agents(env))
         if n == 0:
+            st.cached_background = []
             return []
-        st.cached_background = _generate_room_tiles(
-            self.layout_mode, self.has_center_table, _assets(self.layout_mode),
-            n, self.base_x, self.base_y,
-        )
+        st.cached_background = _build_room(self.cfg, n, self.base_x, self.base_y)
         return st.cached_background
 
     def screen_position(self, entity, env, context=None):
@@ -448,8 +439,7 @@ class SinglePointLayout(Position_Layout_Adapter):
         if isinstance(pos, Single_Point_Position):
             ox, oy = self._state(context).offsets_by_entity.get(entity, (0.0, 0.0))
             return (self.base_x + ox, self.base_y + oy)
-        if pos is not None:
-            x, y = getattr(pos, "x", None), getattr(pos, "y", None)
-            if x is not None and y is not None:
-                return (float(x), float(y))
+        x, y = getattr(pos, "x", None), getattr(pos, "y", None)
+        if x is not None and y is not None:
+            return (float(x), float(y))
         return (self.base_x, self.base_y)

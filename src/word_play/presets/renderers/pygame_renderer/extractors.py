@@ -51,6 +51,9 @@ class Frame_Metadata_Extractor(Render_Extractor):
 
 
 class Visible_Renderables_Extractor(Render_Extractor):
+    def __init__(self, layout: "Position_Layout_Adapter | None" = None):
+        self.layout = layout
+
     def extract(
         self,
         env: "Environment",
@@ -58,10 +61,13 @@ class Visible_Renderables_Extractor(Render_Extractor):
         scene: Render_Scene,
         _context: Render_Context,
     ) -> None:
+        should_render = getattr(self.layout, "should_render", None)
         renderables: list[tuple[int, Entity, Renderable]] = []
         for entity in env.state.entities:
             renderable = entity.get_component(Renderable)
             if renderable is None or not renderable.visible or _is_in_any_inventory(entity, env):
+                continue
+            if should_render is not None and not should_render(entity):
                 continue
             renderables.append((renderable.z_index, entity, renderable))
         renderables.sort(key=lambda item: item[0])
@@ -131,7 +137,7 @@ class Hit_Effect_Extractor(Render_Extractor):
 def default_pygame_extractors(layout: "Position_Layout_Adapter") -> list[Render_Extractor]:
     return [
         Frame_Metadata_Extractor(),
-        Visible_Renderables_Extractor(),
+        Visible_Renderables_Extractor(layout),
         Background_Tiles_Extractor(layout),
         Speech_Bubble_Extractor(),
         Hit_Effect_Extractor(),

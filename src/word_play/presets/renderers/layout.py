@@ -90,6 +90,11 @@ class Position_Layout_Adapter(ABC):
         """Update any renderer-facing derived state before drawing."""
         return None
 
+    def should_render(self, entity: Any) -> bool:
+        """Whether an entity should be drawn. Layouts may restrict this
+        (e.g. the single-point layout renders only agent entities)."""
+        return True
+
 
 class Grid_Layout_Adapter(Position_Layout_Adapter):
     """Use entity x/y values directly as grid coordinates."""
