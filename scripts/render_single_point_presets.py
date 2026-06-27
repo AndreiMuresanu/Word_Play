@@ -128,6 +128,12 @@ def main() -> None:
     out_dir = ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Headless SDL reports a tiny desktop, which caps the fitted tile size (and
+    # therefore the text resolution). Pretend we have a large monitor so the
+    # requested --tile-size is honoured and the preview renders crisply.
+    from word_play.presets.renderers.pygame_renderer import runtime as _rt
+    _rt.desktop_size = lambda: (4096, 4096)
+
     for mode in args.modes.split(","):
         mode = mode.strip()
         layout = SinglePointLayout(mode)
