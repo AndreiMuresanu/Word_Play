@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from word_play.presets.renderers.pygame_renderer.renderer import Pygame_Renderer
 
 
-RUSTIC_TRADE_WINDOW_SPRITE = "src/ui/trade_window_rustic.png"
+RUSTIC_TRADE_WINDOW_SPRITE = "sprite_library/src/ui/trade_window_rustic.png"
 
 
 # ═══════════════════════════════════════════════════════════════════════

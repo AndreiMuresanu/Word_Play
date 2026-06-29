@@ -12,8 +12,7 @@ from word_play.core import (
     Renderer_State,
 )
 
-from .layout import Grid_Layout_Adapter, Position_Layout_Adapter
-from .single_point_renderer import SinglePointLayout
+from .layout import Grid_Layout_Adapter, Position_Layout_Adapter, SinglePointLayout
 from .pygame_renderer.interactive_env import (
     ExperimentRecorder,
     capture_environment_frame,
