@@ -1166,6 +1166,8 @@ def draw_speech_bubbles(
     entity_positions: dict[Entity, tuple[int, int]],
 ) -> None:
     """Draw speech bubbles above entities using rounded rects and tail polygons."""
+    if scene.layers.get("ui.trade_sessions"):
+        return
     speech_bubbles = collect_speech_bubbles(scene)
     if not speech_bubbles:
         return
@@ -1271,6 +1273,51 @@ def draw_speech_bubbles(
             renderer.effect_surface.blit(surface, (text_x, text_y))
             text_y += surface.get_height() + line_gap
 
+
+
+
+def draw_trade_offers(
+    renderer: "Pygame_Renderer",
+    scene: Any,
+    positions: dict[Entity, tuple[int, int]],
+) -> None:
+    """Draw trade windows from scene layer ``ui.trade_sessions``."""
+    from .trading_rendering import draw_chat_session_window, draw_trade_session_window
+
+    entity_lookup: dict[str, Entity] = {}
+    for entity in positions:
+        entity_lookup[entity.name] = entity
+        for component in entity.components.values():
+            # Trade offer items, inventory contents, containers
+            for attr in ("items", "inventory", "contents"):
+                for item in getattr(component, attr, []):
+                    if isinstance(item, Entity):
+                        entity_lookup[item.name] = item
+
+    # ── Trade sessions (private negotiation, from extraction pipeline) ──
+    sessions: list[dict] = scene.layers.get("ui.trade_sessions", [])
+    for session in sessions:
+        left_e = entity_lookup.get(session.get("left_name", ""))
+        right_e = entity_lookup.get(session.get("right_name", ""))
+        if left_e is None or right_e is None:
+            continue
+        left_pos = positions.get(left_e)
+        right_pos = positions.get(right_e)
+        if left_pos is None or right_pos is None:
+            continue
+        draw_trade_session_window(renderer, left_pos, right_pos, session, entity_lookup, 1.0)
+
+    # ── Chat sessions (private conversation panel at the bottom) ──
+    for chat in scene.layers.get("ui.chat_sessions", []):
+        names = chat.get("participant_names", [])
+        participant_positions = [
+            positions[entity_lookup[name]]
+            for name in names
+            if name in entity_lookup and entity_lookup[name] in positions
+        ]
+        if not participant_positions:
+            continue
+        draw_chat_session_window(renderer, participant_positions, names, chat.get("messages", []), 1.0)
 
 
 def auto_tiled_wall_sprites(
@@ -1456,6 +1503,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
         draw_hit_effects(renderer, scene, positions)
         draw_speech_bubbles(renderer, scene, positions)
+        draw_trade_offers(renderer, scene, positions)
         draw_selected_entity_card(renderer, env, positions)
     finally:
         renderer.tile_size = layout_tile_size
