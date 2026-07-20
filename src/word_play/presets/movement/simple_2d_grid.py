@@ -15,7 +15,6 @@ from word_play.core import (
 from word_play.presets.movement.common import (
     Collidable,
     check_for_collision_at_position,
-    positions_are_close_if_equal,
 )
 
 
@@ -112,8 +111,12 @@ class Move_Down(Action):
         return "Move down."
 
 
+def positions_are_close_if_same_or_adjacent(position_a: Position_2D, position_b: Position_2D) -> bool:
+    return abs(position_a.x - position_b.x) + abs(position_a.y - position_b.y) <= 1
+
+
 INFINITE_2D_MOVEMENT_SYSTEM = Movement_System(
     position_type=Position_2D,
     movement_options=[Move_Left(), Move_Right(), Move_Up(), Move_Down()],
-    positions_are_close=positions_are_close_if_equal,
+    positions_are_close=positions_are_close_if_same_or_adjacent,
 )
