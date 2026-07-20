@@ -4,7 +4,7 @@ Ported from bryan/trading_rendering, refactored to use .assets imports.
 """
 from __future__ import annotations
 
-import math, textwrap, pygame
+import pygame
 from typing import Any, TYPE_CHECKING
 
 from word_play.presets.renderers.pygame_renderer.renderable import Renderable
@@ -30,13 +30,6 @@ def _chat_message_text(message: Any) -> str:
     return str(message)
 
 
-def parse_trade_message(text: str) -> dict[str, Any] | None:
-    try:
-        return {"left_name": "Trader 1", "right_name": "Trader 2", "accepted": "yes" if "accepted" in text.lower() else ""}
-    except Exception:
-        return None
-
-
 def _trade_items_from_field(text: str) -> list[str]:
     if not text or text.lower() == "none":
         return []
@@ -53,7 +46,7 @@ def _trade_session_rect(
     surface = renderer.effect_surface
     sw, sh = surface.get_width(), surface.get_height()
     center_x = (left_pos[0] + right_pos[0]) // 2 + renderer.tile_size // 2
-    y = max(20, min(left_pos[1], right_pos[1]) - panel_height - 20)
+    y = min(left_pos[1], right_pos[1]) - panel_height - 20
     if y < 20:
         y = max(left_pos[1] + renderer.tile_size, right_pos[1] + renderer.tile_size) + 20
     x = max(8, min(center_x - panel_width // 2, sw - panel_width - 8))
@@ -119,7 +112,6 @@ def _draw_exchange_emblem(surface: pygame.Surface, cx: int, cy: int, size: int) 
         pygame.draw.line(surface, shaft, (x0, ay), (x1, ay), width=max(2, s // 5))
         head = max(3, s // 2)
         tip = (x1, ay)
-        back = x1 - sign * 0  # direction handled by ordering below
         dir_x = 1 if x1 > x0 else -1
         pygame.draw.polygon(surface, shaft, [
             tip,
