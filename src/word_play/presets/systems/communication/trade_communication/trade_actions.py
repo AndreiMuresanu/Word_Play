@@ -115,7 +115,7 @@ class Start_Private_Trade(Action):
     def exec_action(self, actor: Entity, target_entity: Entity, env: Environment, kwargs: dict | None) -> dict | None:
         assert kwargs is not None and "trade partners" in kwargs, "Action missing kwarg: 'trade partners'"
         potential_participants = nearby_trade_partners(actor, env)
-        participants = [potential_participants[idx] for idx in kwargs["trade partners"]]
+        participants = [potential_participants[idx] for idx in dict.fromkeys(kwargs["trade partners"])]
         participants.append(actor)
         return self.trade_format(participants, env, trade_duration=self.trade_duration)
 
