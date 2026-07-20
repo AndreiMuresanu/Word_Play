@@ -133,7 +133,8 @@ def run_exp(exp_steps: int):
     for agent in env.agents:
         inventory = agent.get_component(Inventory)
         money = agent.get_component(Money)
-        print(f"{agent.name} final inventory: {inventory or 'empty'}; money: {money or 'no money'}")
+        items = ", ".join(item.name for item in inventory.inventory) if inventory else ""
+        print(f"{agent.name} final inventory: {items or 'empty'}; money: {money or 'no money'}")
 
     return env
 
