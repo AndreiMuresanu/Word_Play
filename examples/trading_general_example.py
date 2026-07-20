@@ -9,9 +9,7 @@ from word_play.presets.models import LLM_MODEL_REGISTRY, OpenRouter_Model
 from word_play.presets.movement.simple_2d_grid import Position_2D
 from word_play.presets.systems.communication.trade_communication.presets.policies import LLM_Trading_Policy
 from word_play.presets.systems.communication.trade_communication.trade_actions import (
-    Accept_Public_Trade,
-    Public_Trade_Offer,
-    Start_Public_Trade,
+    Start_Private_Trade,
 )
 from word_play.presets.systems.currency import Money
 from word_play.presets.systems.do_nothing import Do_Nothing
@@ -28,15 +26,15 @@ def run_exp(exp_steps: int):
     entity_tileset = {
         "B": {
             "name": "Bob",
-            "actions": [Start_Public_Trade(), Do_Nothing()],
+            "actions": [Start_Private_Trade(), Do_Nothing()],
             "components": [
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
                         "You are Bob, a forest apothecary. You have Berry and Herb. "
                         "You want Bread and Spice, and you dislike giving away Berry without getting one. "
-                        "First post Berry as a public offer for Bread plus Spice or a strong counteroffer. "
-                        "After posting, choose Do nothing and let Alice or Cara accept."
+                        "Start a trade with both Alice and Cara, offering Berry for Bread plus Spice "
+                        "or a strong counteroffer. Once you have Bread and Spice, choose Do nothing."
                     ),
                     use_chain_of_thought=False,
                     action_generation_config={"temperature": 0.25},
@@ -52,19 +50,18 @@ def run_exp(exp_steps: int):
                     ],
                 ),
                 Money(amount=1),
-                Public_Trade_Offer(),
             ],
         },
         "A": {
             "name": "Alice",
-            "actions": [Accept_Public_Trade(), Do_Nothing()],
+            "actions": [Start_Private_Trade(), Do_Nothing()],
             "components": [
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
                         "You are Alice, a village baker. You have Bread, Apple, and gold. "
                         "You want Berry and Cheese, and you prefer to keep them once you have them. "
-                        "If Bob posts Berry publicly, accept and offer Bread; add Apple or 1 gold if needed. "
+                        "If Bob offers Berry, offer Bread; add Apple or 1 gold if needed. "
                         "Otherwise choose Do nothing. In chat, say what changed in your offer."
                     ),
                     use_chain_of_thought=False,
@@ -85,14 +82,14 @@ def run_exp(exp_steps: int):
         },
         "C": {
             "name": "Cara",
-            "actions": [Accept_Public_Trade(), Do_Nothing()],
+            "actions": [Start_Private_Trade(), Do_Nothing()],
             "components": [
                 LLM_Trading_Policy(
                     model_key="trading_general",
                     system_prompt=(
                         "You are Cara, a festival cook. You have Spice, Cheese, and gold. "
                         "You want Berry and Apple, and you value Spice. "
-                        "If Bob posts Berry publicly, accept and offer Spice; add Cheese or 1 gold if needed. "
+                        "If Bob offers Berry, offer Spice; add Cheese or 1 gold if needed. "
                         "Otherwise choose Do nothing. In chat, say what changed in your offer."
                     ),
                     use_chain_of_thought=False,
@@ -115,9 +112,8 @@ def run_exp(exp_steps: int):
 
     env = Simple_2D_Grid_World(
         description=(
-            "A three-person public-trade market. Bob owns the scarce Berry and posts it publicly. "
-            "Alice and Cara can both see and accept that public offer, but only the first successful acceptor "
-            "gets the negotiation."
+            "A three-person market. Bob owns the scarce Berry and can open a trade with "
+            "Alice and Cara at once; whoever puts together the better package wins the Berry."
         ),
         entities=tilemap_to_entities(entity_tilemap, entity_tileset),
         entity_order=entity_definition_order,
