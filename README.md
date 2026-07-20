@@ -99,7 +99,9 @@ For many grid-world examples, start with `Simple_2D_Grid_World` and
 
 The renderer preset is a pygame renderer for watching an environment live,
 inspecting agents, focusing an agent's observation window, and replaying a
-saved run.
+saved run. For the full architecture guide, see
+[src/word_play/presets/renderers/README.md](src/word_play/presets/renderers/README.md).
+A runnable example lives at [examples/rendering_demo.py](examples/rendering_demo.py).
 
 ### Add Sprites To Entities
 
@@ -140,23 +142,36 @@ wall = Entity(
 )
 ```
 
-Set the floor sprite on the environment:
+Set the floor sprite on the renderer, or publish it as a render hint:
 
 ```python
-env.floor_sprite = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png"
+renderer = Pygame_Renderer(
+    Grid_Layout_Adapter(),
+    default_floor_sprite="sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
+)
+# or, per environment:
+env.render_state.frame["world.floor_sprite"] = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png"
 ```
 
 ### Live Rendering
 
-Call `render_step(env)` inside your normal experiment loop:
+Attach a `Pygame_Renderer` to the environment and call `env.render()` inside
+your normal experiment loop:
 
 ```python
 from word_play.core import Agent_Policy
-from word_play.presets.renderers import render_step
+from word_play.presets.renderers import Grid_Layout_Adapter, Pygame_Renderer
+
+renderer = Pygame_Renderer(Grid_Layout_Adapter(), tile_size=56)
+env = Simple_2D_Grid_World(..., renderer=renderer)
 
 for step in range(100):
-    if not render_step(env, step_delay=0.15):
+    render_result = env.render()
+    if render_result.quit_requested:
         break
+    if render_result.reset_requested:
+        env.reset()
+        continue
 
     selections = []
     for agent_id, agent in enumerate(env.agents):
@@ -172,8 +187,8 @@ Live controls:
 - Left click an agent to open the agent info card.
 - Right click an agent to focus and follow its observation-sized view.
 - Right click empty space to return to the full environment view.
-- `R` calls `env.reset()` if the environment has a reset method.
-- Escape or closing the window quits rendering.
+- `R` sets `render_result.reset_requested` so your loop can call `env.reset()`.
+- Escape or closing the window sets `render_result.quit_requested`.
 
 When `Human_Takes_Action` or `Human_Communication_Policy` is used with a
 rendered environment, action selection, action kwargs, and chat input appear in
@@ -207,12 +222,6 @@ Replay the saved experiment:
 from word_play.presets.renderers import replay
 
 replay("path/to/experiment_log.pkl")
-```
-
-You can also run the replay CLI from the repo root:
-
-```bash
-PYTHONPATH=src python -m word_play.presets.renderers.renderer path/to/experiment_log.pkl
 ```
 
 Replay controls:
