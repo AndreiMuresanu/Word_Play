@@ -15,6 +15,10 @@ class Renderable(Component):
         overlay_mode: str = "badge",
         overlay_scale: float | None = None,
         wall_set: str | None = None,
+        shadow_scale: float = 0.72,
+        bob_amplitude: float = 0.0,
+        speech_bubble_scale: float = 1.0,
+        is_background: bool = False,
     ):
         super().__init__()
         self.sprite_path = sprite_path
@@ -24,3 +28,12 @@ class Renderable(Component):
         self.overlay_sprite = overlay_sprite
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
+        self.shadow_scale = shadow_scale
+        self.bob_amplitude = bob_amplitude
+        self.speech_bubble_scale = speech_bubble_scale
+        self.last_message: str | None = None
+        self.emissive_sprite: str | None = None
+        self.emissive_intensity: int = 84
+        self.foreground_sprite: str | None = None
+        self.foreground_scale: float = 1.0
+        self.is_background = is_background
