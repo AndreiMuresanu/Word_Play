@@ -1,7 +1,4 @@
-"""Trade window rendering — public offers, trade sessions, chat sessions, negotiation.
-
-Ported from bryan/trading_rendering, refactored to use .assets imports.
-"""
+"""Trade window rendering — private trade sessions and chat sessions."""
 from __future__ import annotations
 
 import pygame
