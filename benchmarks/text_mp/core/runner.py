@@ -12,8 +12,12 @@ from benchmarks.text_mp.core.timing import BENCHMARK_STEPS
 @dataclass
 class EpisodeResult:
     steps: int
-    rewards: list[float]
+    returns: list[float]
     events: list[str] = field(default_factory=list)
+
+    @property
+    def per_capita_return(self) -> float:
+        return sum(self.returns) / len(self.returns) if self.returns else 0.0
 
 
 def run_episode(
@@ -28,6 +32,7 @@ def run_episode(
     install_reward_buffer(env)
     env.max_episode_steps = max_steps
     events: list[str] = []
+    cumulative_returns = [0.0] * len(env.agents)
 
     while not any(env.terminations) and not any(env.truncations):
         if env.cur_step >= max_steps:
@@ -63,13 +68,24 @@ def run_episode(
                 events.append(line)
                 print_fn(line)
 
+        for agent_id, reward in enumerate(env.last_step_rewards):
+            cumulative_returns[agent_id] += reward
+
         if any(env.last_step_rewards):
             rewards_line = f"[step {step}] rewards -> {env.last_step_rewards}"
             events.append(rewards_line)
             print_fn(rewards_line)
 
+    summary = ", ".join(
+        f"{agent.name}={cumulative_returns[i]:.2f}"
+        for i, agent in enumerate(env.agents)
+    )
+    per_capita = sum(cumulative_returns) / len(cumulative_returns) if cumulative_returns else 0.0
+    print_fn(f"[episode end] steps={env.cur_step} returns -> {summary}")
+    print_fn(f"[episode end] per-capita return -> {per_capita:.3f}")
+
     return EpisodeResult(
         steps=env.cur_step,
-        rewards=list(getattr(env, "last_rewards", [0.0] * len(env.agents))),
+        returns=cumulative_returns,
         events=events,
     )

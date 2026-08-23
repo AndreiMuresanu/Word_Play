@@ -25,7 +25,6 @@ from word_play.presets.action_validations import (
     Target_Is_Self,
     Target_Not_Self,
 )
-from word_play.presets.renderers.pygame_renderer.renderable import Renderable
 from word_play.presets.systems.reward import Rewardable, award_reward
 
 
@@ -84,6 +83,10 @@ class Inventory_Items_Arg(Action_Arg):
 
 def _set_item_visibility(item: Entity, *, visible: bool) -> None:
     """Set item visibility via its Renderable component."""
+    # Lazy import: a low-level system must not import the renderer package at
+    # module load, or it forms an inventory<->renderer circular import.
+    from word_play.presets.renderers.pygame_renderer.renderable import Renderable
+
     renderable = item.get_component(Renderable)
     if renderable is not None:
         renderable.visible = visible
