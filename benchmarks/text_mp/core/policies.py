@@ -40,7 +40,7 @@ def make_policy(
         return LLM_Action_And_Communication_Policy(
             model_key=model_key,
             system_prompt=system_prompt,
-            use_chain_of_thought=False,
+            use_chain_of_thought=True,
             observation_memory_window=observation_memory_window,
             conversation_memory_window=conversation_memory_window,
             action_max_new_tokens=512,
