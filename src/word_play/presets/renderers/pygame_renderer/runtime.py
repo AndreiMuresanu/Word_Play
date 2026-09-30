@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import pygame
 
@@ -15,13 +16,59 @@ if TYPE_CHECKING:
 _PYGAME_RUNTIME_KEY = object()
 
 
+class LRU_Surface_Cache:
+    """A bounded, dict-compatible surface cache with least-recently-used eviction.
+
+    Long sims used to grow the scaled/glow/fringe caches without limit (every
+    distinct size, flip, and brightness bucket minted a new surface forever);
+    this keeps the hot working set and lets cold entries fall out.
+    """
+
+    __slots__ = ("_data", "max_entries")
+
+    def __init__(self, max_entries: int = 4096) -> None:
+        self._data: OrderedDict = OrderedDict()
+        self.max_entries = max_entries
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        try:
+            value = self._data[key]
+        except KeyError:
+            return default
+        self._data.move_to_end(key)
+        return value
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._data
+
+    def __getitem__(self, key: Any) -> Any:
+        value = self._data[key]
+        self._data.move_to_end(key)
+        return value
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._data[key] = value
+        self._data.move_to_end(key)
+        if len(self._data) > self.max_entries:
+            self._data.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get_or_build(self, key: Any, build: Callable[[], Any]) -> Any:
+        """Return the cached value for ``key``, building (and caching) it once."""
+        if key not in self._data:
+            self[key] = build()
+        return self[key]
+
+
 @dataclass(slots=True)
 class Pygame_Session_State:
     pygame_initialized: bool = False
     image_cache: dict[str, Any] = field(default_factory=dict)
-    scaled_image_cache: dict[tuple[str, int, int], Any] = field(default_factory=dict)
+    scaled_image_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(4096))
     wall_set_cache: dict[str, dict[str, str]] = field(default_factory=dict)
-    vignette_cache: dict[tuple[int, int], Any] = field(default_factory=dict)
+    overlay_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(24))
     window_size: tuple[int, int] | None = None
 
 

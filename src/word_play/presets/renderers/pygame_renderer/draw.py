@@ -981,18 +981,24 @@ def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: 
     """Apply a subtle darkening toward the edges of the world view."""
     cache_key = (world_width, world_height)
     session = pygame_runtime(renderer).session
-    overlay = session.vignette_cache.get(cache_key)
+    overlay = session.overlay_cache.get(cache_key)
     if overlay is None:
-        overlay = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
-        center_x = world_width / 2
-        center_y = world_height / 2
+        # Build the radial falloff at low resolution and smoothscale up: the
+        # gradient is low-frequency, so this reads identically to a per-pixel
+        # build while avoiding ~1.5M Python set_at calls on first frame/resize.
+        low_w = max(2, min(160, world_width))
+        low_h = max(2, min(160, int(round(low_w * world_height / max(1, world_width)))))
+        field = pygame.Surface((low_w, low_h), pygame.SRCALPHA)
+        center_x = low_w / 2
+        center_y = low_h / 2
         max_distance = math.hypot(center_x, center_y) or 1.0
-        for y in range(world_height):
-            for x in range(world_width):
+        for y in range(low_h):
+            for x in range(low_w):
                 distance = math.hypot(x - center_x, y - center_y)
                 alpha = int(max(0.0, min(78.0, ((distance / max_distance) ** 1.9) * 78.0)))
-                overlay.set_at((x, y), (6, 8, 12, alpha))
-        session.vignette_cache[cache_key] = overlay
+                field.set_at((x, y), (6, 8, 12, alpha))
+        overlay = pygame.transform.smoothscale(field, (world_width, world_height))
+        session.overlay_cache[cache_key] = overlay
     renderer.screen.blit(overlay, (world_x, 0))
 
 
