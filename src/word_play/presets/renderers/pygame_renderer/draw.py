@@ -1366,6 +1366,64 @@ def _build_wash(width: int, height: int, top: tuple, bottom: tuple | None) -> py
     return wash
 
 
+def draw_chimney_smoke(renderer: "Pygame_Renderer", sources: list[tuple[int, int, int]]) -> None:
+    """Puffs drifting up from hearths/chimneys — drawn into the world layers so
+    ambient washes light them correctly. Deterministic from time."""
+    config = renderer.beautify
+    if not config.enabled or not config.particles or not sources:
+        return
+    session = pygame_runtime(renderer).session
+    t = time.monotonic()
+    for cx, top_y, salt in sources:
+        for i in range(3):
+            progress = (t * 0.30 + i * 0.34 + (salt % 97) * 0.01) % 1.0
+            rise = progress * renderer.tile_size * 1.4
+            px = cx + math.sin(t * 1.1 + i * 2.1 + salt) * 2.5
+            py = top_y - 2 - rise
+            alpha = int(120 * (1.0 - progress))
+            if alpha <= 6:
+                continue
+            size = 2 + int(progress * 3)
+            # alpha quantized to 16 steps so the fading puffs reuse a small
+            # set of cached surfaces instead of allocating one per puff per frame
+            q_alpha = min(120, (alpha // 16) * 16 + 8)
+            puff = session.scaled_image_cache.get_or_build(
+                ("__puff__", size, q_alpha), lambda: _puff_surface(size, q_alpha)
+            )
+            renderer.effect_surface.blit(puff, (int(px) - size, int(py) - size))
+
+
+def draw_ambient_particles(renderer: "Pygame_Renderer", bounds: pygame.Rect) -> None:
+    """Drifting glowing motes (fireflies at dusk/night), kept inside the map."""
+    config = renderer.beautify
+    if not config.particles or bounds.width < 8 or bounds.height < 8:
+        return
+    session = pygame_runtime(renderer).session
+    t = time.monotonic()
+    color = config.particle_color
+    count = max(12, min(48, (bounds.width * bounds.height) // 11000))
+    for i in range(count):
+        seed = (i * 2654435761) & 0xFFFFFFFF
+        drift = 3.0 + (seed % 7)
+        px = bounds.x + int((seed % bounds.width + t * drift) % bounds.width)
+        py = bounds.y + int(((seed >> 8) % bounds.height + math.sin(t * 0.6 + i * 0.9) * 6) % bounds.height)
+        pulse = 0.5 + 0.5 * math.sin(t * 1.8 + i * 1.7)
+        brightness = pulse * (0.4 + 0.6 * ((seed >> 16) % 100) / 100)
+        if brightness < 0.12:
+            continue
+        # soft bloom under a bright 1px core, so motes glow instead of reading
+        # as stuck square pixels; colors quantized so the pulsing motes reuse
+        # cached surfaces instead of minting new ones every frame
+        bloom_color = tuple((int(c * brightness) // 8) * 8 for c in color)
+        bloom = _glow_surface(renderer, bloom_color, 5, 0.9)
+        renderer.screen.blit(bloom, (px - 5, py - 5), special_flags=pygame.BLEND_RGB_ADD)
+        core_color = tuple((int(c * brightness * 0.8) // 8) * 8 for c in color)
+        core = session.scaled_image_cache.get_or_build(
+            ("__mote__", core_color), lambda: _filled_surface(2, 2, core_color)
+        )
+        renderer.screen.blit(core, (px, py), special_flags=pygame.BLEND_RGB_ADD)
+
+
 def _glow_surface(
     renderer: "Pygame_Renderer",
     color: tuple[int, int, int],
@@ -1380,6 +1438,18 @@ def _glow_surface(
     strength = round(strength, 1)
     cache = pygame_runtime(renderer).session.scaled_image_cache
     return cache.get_or_build(("__glow__", color, radius, strength), lambda: _build_glow(color, radius, strength))
+
+
+def _filled_surface(width: int, height: int, color: tuple) -> pygame.Surface:
+    surface = pygame.Surface((width, height), pygame.SRCALPHA if len(color) == 4 else 0)
+    surface.fill(color)
+    return surface
+
+
+def _puff_surface(size: int, alpha: int) -> pygame.Surface:
+    puff = pygame.Surface((size * 2, size * 2), pygame.SRCALPHA)
+    pygame.draw.circle(puff, (208, 208, 214, alpha), (size, size), size)
+    return puff
 
 
 def _build_glow(color: tuple[int, int, int], radius: int, strength: float) -> pygame.Surface:
@@ -1852,6 +1922,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
         positions: dict[Entity, tuple[int, int]] = {}
         glow_draws: list[tuple[int, int, tuple[int, int, int], float, float]] = []
+        smoke_draws: list[tuple[int, int, int]] = []
         emissive_draws: list[tuple[Any, tuple[int, int]]] = []
         for entity, renderable, world_position, position in visible_entity_draws:
             px, py = position
@@ -1881,6 +1952,8 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                     renderable.glow_radius,
                     strength,
                 ))
+            if renderable.smoke:
+                smoke_draws.append((draw_rect.x + draw_rect.width // 2, draw_rect.y, id(entity)))
             if light_level > 0.05 and renderable.wall_set is None:
                 sprite = resolve_sprite(renderer.theme, renderable.sprite_path)
                 emissive_h = sprite_draw_height(renderer, get_or_load_image(renderer, sprite), draw_rect.width)
@@ -1897,10 +1970,11 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 sprite_name_override=wall_sprite_overrides.get(entity),
             )
 
-        # UI overlays (speech bubbles, inspector card, hit effects)
+        # UI overlays (smoke, speech bubbles, inspector card, hit effects)
         # intentionally rise into the viewport padding; the cull-margin clip
         # must not cut them. World-tied content above keeps the clip.
         renderer.effect_surface.set_clip(None)
+        draw_chimney_smoke(renderer, smoke_draws)
         draw_hit_effects(renderer, scene, positions)
         draw_speech_bubbles(renderer, scene, positions)
         draw_selected_entity_card(renderer, env, positions)
@@ -1961,6 +2035,14 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             )
         if camera_clip is not None:
             renderer.screen.set_clip(None)
+        if ambient_wash is not None or ambient_mult is not None:
+            inner = pygame.Rect(
+                world_x + renderer.viewport_pad_w,
+                renderer.viewport_pad_n,
+                grid_width * renderer.tile_size,
+                grid_height * renderer.tile_size,
+            )
+            draw_ambient_particles(renderer, inner)
     draw_world_vignette(renderer, world_x, world_width, world_height)
 
     draw_text_terminal_panel(
