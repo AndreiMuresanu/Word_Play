@@ -604,6 +604,16 @@ def _shares_tile(renderable: Renderable) -> bool:
     return renderable.wall_set is None and not renderable.floor
 
 
+def sprite_draw_height(renderer: "Pygame_Renderer", image: Any, width: int) -> int:
+    """Aspect-preserving height: a 16x32 sprite draws one tile wide and two tall,
+    anchored at the bottom of its tile — tall trees/props need no extra API."""
+    if renderer.beautify.enabled and image.get_width() > 0:
+        ratio = image.get_height() / image.get_width()
+        if ratio > 1.2:
+            return int(width * ratio)
+    return width
+
+
 def draw_entity(
     renderer: "Pygame_Renderer",
     entity: Entity,
@@ -621,7 +631,8 @@ def draw_entity(
     if image is None:
         sprite_name = placeholder(sprite_name, f"entity '{entity.name}'")
         image = get_or_load_image(renderer, sprite_name)
-    scaled_image = get_scaled_image(renderer, sprite_name, sprite_size, sprite_size)
+    draw_height = sprite_draw_height(renderer, image, sprite_size)
+    scaled_image = get_scaled_image(renderer, sprite_name, sprite_size, draw_height)
     # team/ownership recolor: multiply toward the tint hue (keeps the ink
     # outline dark, unlike an additive flash) — cached per sprite state
     tint = renderable.tint
@@ -638,7 +649,7 @@ def draw_entity(
 
             cache = pygame_runtime(renderer).session.scaled_image_cache
             tint_key = (
-                "__tint__", sprite_name, sprite_size,
+                "__tint__", sprite_name, sprite_size, draw_height,
                 tuple(tint), round(tint_strength, 2),
             )
             scaled_image = cache.get_or_build(tint_key, build_tinted)
@@ -660,14 +671,15 @@ def draw_entity(
         shadow_x = px + (sprite_size - shadow_width) // 2
         shadow_y = py + sprite_size - shadow_height // 2 - max(2, sprite_size // 12)
         renderer.shadow_surface.blit(shadow, (shadow_x, shadow_y))
+    draw_py = py - (draw_height - sprite_size)          # bottom-anchor tall sprites
     if is_floor:
         # Walk-on terrain (docks, bridges, rugs): paint into the ground layer so
         # entities render on top of it, and skip shadow/rings/click-registration —
         # a floor tile is scenery an agent stands on, not a selectable entity.
-        renderer.floor_surface.blit(scaled_image, (px, py))
+        renderer.floor_surface.blit(scaled_image, (px, draw_py))
         return
-    renderer.entity_surface.blit(scaled_image, (px, py))
-    pygame_runtime(renderer).view.last_drawn_entity_rects[entity] = pygame.Rect(px, py, sprite_size, sprite_size)
+    renderer.entity_surface.blit(scaled_image, (px, draw_py))
+    pygame_runtime(renderer).view.last_drawn_entity_rects[entity] = pygame.Rect(px, draw_py, sprite_size, draw_height)
     draw_selection_ring(renderer, entity, px, py, sprite_size)
     draw_focus_ring(renderer, entity, px, py, sprite_size)
 
