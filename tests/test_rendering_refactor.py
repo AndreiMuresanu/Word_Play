@@ -360,6 +360,23 @@ class RenderBehaviourTests(unittest.TestCase):
         apply_behaviour(r)
         self.assertEqual(r.glow, (0, 255, 0))
 
+    def test_dynamic_behaviour_registry(self):
+        from word_play.presets.renderers import resolve_dynamic_behaviour
+
+        fishing = resolve_dynamic_behaviour("fishing")
+        self.assertIsNotNone(fishing)
+        self.assertEqual(fishing.pose, "fishing")
+        self.assertEqual(fishing.effect, "catch_splash")
+        self.assertIsNone(resolve_dynamic_behaviour(None))
+
+    def test_action_field_defaults_none_and_is_mutable(self):
+        from word_play.presets.renderers import Renderable
+
+        r = Renderable(sprite_path="x.png")
+        self.assertIsNone(r.action)
+        r.action = "fishing"
+        self.assertEqual(r.action, "fishing")
+
 
 if __name__ == "__main__":
     unittest.main()

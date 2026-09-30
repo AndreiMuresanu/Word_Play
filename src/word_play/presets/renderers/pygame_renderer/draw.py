@@ -15,9 +15,11 @@ from .assets import (
     get_or_load_image,
     get_scaled_image,
     get_soft_shadow,
+    pose_sibling,
     resolve_wall_sprite,
 )
-from ..themes import apply_theme_defaults, placeholder, resolve_sprite
+from ..dynamic_behaviours import resolve_dynamic_behaviour
+from ..themes import apply_theme_defaults, lookup_sprite, placeholder, resolve_sprite
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
@@ -717,6 +719,130 @@ def animated_sprite_name(
     return sibling if (tick + stagger) % 2 else sprite_name
 
 
+_FACING_STEP = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+
+
+
+def draw_dynamic_effect(
+    renderer: "Pygame_Renderer",
+    dynamic: Any,
+    px: int,
+    py: int,
+    sprite_size: int,
+    facing: str,
+) -> None:
+    """Draw a dynamic behaviour's looping effect sprite ahead of the entity.
+
+    ``effect`` is a sprite-name (theme-resolved, auto-animated via its ``_2``
+    frame); it rides ``effect_forward`` tiles in the direction the entity faces —
+    e.g. the cast splash sits on the water just ahead of an angler.
+    """
+    sprite = lookup_sprite(renderer.theme, dynamic.effect)   # missing effect art is a no-op
+    size = max(8, int(sprite_size * dynamic.effect_scale))   # constant: cache-safe
+    image = None
+    if sprite is not None:
+        sprite = animated_sprite_name(renderer, sprite, stagger=(px + py) >> 5)
+        image = get_scaled_image(renderer, sprite, size, size)
+    dx, dy = _FACING_STEP.get(facing, (0, -1))
+    cx = px + sprite_size // 2 + int(dx * sprite_size * dynamic.effect_forward)
+    cy = py + sprite_size // 2 + int(dy * sprite_size * dynamic.effect_forward)
+    if image is not None:
+        if dynamic.impact:
+            # punch the burst bright on a fast beat instead of letting it idle, so
+            # a swing reads as a landing hit. Quantize the pulse to a few discrete
+            # brightness buckets and cache the lit surfaces (like the tint cache),
+            # so a busy scene reuses ~5 variants instead of copying every frame.
+            glow = 0.5 + 0.5 * math.sin(time.monotonic() * 18.0 + (px + py))
+            bucket = min(4, int(glow * 4))
+            add = int(70 * (bucket / 4.0))
+
+            def build_lit(base: Any = image) -> Any:
+                lit = base.copy()
+                lit.fill((add, int(add * 0.85), int(add * 0.4), 0), special_flags=pygame.BLEND_RGBA_ADD)
+                return lit
+
+            cache = pygame_runtime(renderer).session.scaled_image_cache
+            image = cache.get_or_build(("__impact__", sprite, size, bucket), build_lit)
+        renderer.effect_surface.blit(image, (cx - size // 2, cy - size // 2))
+    if dynamic.impact:
+        # an expanding shock-ring — cheap, and it sells the impact even with no
+        # effect art at all (missing sprites are a no-op by contract)
+        ring = (size // 3) + int((0.5 + 0.5 * math.sin(time.monotonic() * 12.0 + cx)) * size * 0.5)
+        if ring > 2:
+            pygame.draw.circle(renderer.effect_surface, (255, 236, 170), (cx, cy), ring, width=max(1, size // 12))
+
+
+_EMOTE_STYLE = {
+    "alarm": (235, 64, 52),
+    "anger": (232, 72, 40),
+    "note": (96, 206, 224),
+    "sleep": (176, 202, 238),
+    "love": (240, 120, 168),
+    "spark": (255, 214, 92),
+    "sweat": (120, 176, 235),
+}
+
+
+def draw_emote(renderer: "Pygame_Renderer", name: str, cx: int, base_y: int, size: int) -> None:
+    """Float a small mood glyph above an entity — the cheapest way to read a
+    creature's intent (panic, fury, sleep) at a glance. Fully procedural: no art,
+    scales cleanly, and each glyph gets a 1px drop-shadow so it stays legible over
+    any background. Unknown names fall back to a soft dot."""
+    surface = renderer.effect_surface
+    color = _EMOTE_STYLE.get(name, (240, 240, 240))
+    s = max(8, size)
+    bob = int(math.sin(time.monotonic() * 4.0 + cx * 0.05) * s * 0.12)
+    y = base_y - bob
+
+    def stroke(col, o):
+        if name == "alarm":
+            w = max(3, s // 4)
+            pygame.draw.rect(surface, col, (cx - w // 2 + o, y - s // 2 + o, w, int(s * 0.5)), border_radius=w // 2)
+            pygame.draw.circle(surface, col, (cx + o, y + int(s * 0.26) + o), max(2, w // 2))
+        elif name == "anger":
+            r = s // 2
+            for ang in (0.0, 1.05, 2.09, 3.14, 4.19, 5.24):
+                ex = cx + int(math.cos(ang) * r) + o
+                ey = y + int(math.sin(ang) * r) + o
+                pygame.draw.line(surface, col, (cx + o, y + o), (ex, ey), max(2, s // 7))
+        elif name == "note":
+            head = max(3, s // 4)
+            pygame.draw.ellipse(surface, col, (cx - head + o, y + int(s * 0.12) + o, head * 2, int(head * 1.4)))
+            pygame.draw.line(surface, col, (cx + head + o, y + int(s * 0.18) + o), (cx + head + o, y - s // 2 + o), max(2, s // 9))
+            pygame.draw.line(surface, col, (cx + head + o, y - s // 2 + o), (cx + head + s // 3 + o, y - s // 3 + o), max(2, s // 9))
+        elif name == "sleep":
+            for i, sc in enumerate((0.7, 1.0)):
+                zx = cx - s // 4 + i * s // 3 + o
+                zy = y - i * s // 3 + o
+                zs = int(s * 0.38 * sc)
+                w = max(2, int(s * 0.09))
+                pygame.draw.line(surface, col, (zx, zy - zs // 2), (zx + zs, zy - zs // 2), w)
+                pygame.draw.line(surface, col, (zx + zs, zy - zs // 2), (zx, zy + zs // 2), w)
+                pygame.draw.line(surface, col, (zx, zy + zs // 2), (zx + zs, zy + zs // 2), w)
+        elif name == "love":
+            r = max(3, s // 4)
+            pygame.draw.circle(surface, col, (cx - r // 2 + o, y - r // 3 + o), r)
+            pygame.draw.circle(surface, col, (cx + r // 2 + o, y - r // 3 + o), r)
+            pygame.draw.polygon(surface, col, [(cx - r + o, y + o), (cx + r + o, y + o), (cx + o, y + r + int(r * 0.5) + o)])
+        elif name == "spark":
+            r = s // 2
+            pts = []
+            for k in range(8):
+                ang = k * math.pi / 4
+                rad = r if k % 2 == 0 else r // 2
+                pts.append((cx + int(math.cos(ang) * rad) + o, y + int(math.sin(ang) * rad) + o))
+            pygame.draw.polygon(surface, col, pts)
+        elif name == "sweat":
+            r = max(3, s // 4)
+            pygame.draw.circle(surface, col, (cx + o, y + r // 2 + o), r)
+            pygame.draw.polygon(surface, col, [(cx - r + o, y + r // 3 + o), (cx + r + o, y + r // 3 + o), (cx + o, y - r + o)])
+        else:
+            pygame.draw.circle(surface, col, (cx + o, y + o), max(3, s // 3))
+
+    stroke((20, 16, 14), 1)   # drop-shadow for legibility
+    stroke(color, 0)
+
+
 def _shares_tile(renderable: Renderable) -> bool:
     """Walls and floor terrain never crowd a tile; everything else is offset
     side-by-side when several entities stand on the same tile."""
@@ -745,12 +871,31 @@ def draw_entity(
 ) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
     sprite_size = draw_size or renderer.tile_size
-    # resolve a bare name to its file first: the _back/_2 sibling
+    # resolve a bare name to its file first: the _back/_<pose>/_2 sibling
     # conventions below work on real paths
     sprite_name = resolve_sprite(renderer.theme, sprite_name_override or renderable.sprite_path)
     view = pygame_runtime(renderer).view
     in_motion = entity in view.entities_in_motion
     facing = view.entity_facing.get(entity, "down")
+    # dynamic behaviour (fishing, sitting, …): swap to the _<pose> sprite and pin
+    # facing while the sim has this entity's `action` set to that behaviour
+    dynamic = resolve_dynamic_behaviour(renderable.action)
+    if dynamic is not None:
+        if dynamic.face is not None:
+            facing = dynamic.face
+        if dynamic.pose is not None:
+            posed = pose_sibling(renderer, sprite_name, dynamic.pose)
+            if posed is not None:
+                sprite_name = posed
+    # recoil / tremble: jitter the sprite (its shadow stays put, so it reads as
+    # motion, not a teleport) — a struck sheep flinches, a hammered anvil buzzes
+    shake_dx = shake_dy = 0
+    if dynamic is not None and dynamic.shake:
+        amp = dynamic.shake * sprite_size
+        seed = (id(entity) % 617) * 0.0113
+        now_s = time.monotonic()
+        shake_dx = int(math.sin(now_s * 33.0 + seed) * amp)
+        shake_dy = int(math.cos(now_s * 27.0 + seed) * amp * 0.7)
     if facing == "up":
         rear = back_sibling(renderer, sprite_name)
         if rear is not None:
@@ -811,12 +956,21 @@ def draw_entity(
         # Walk-on terrain (docks, bridges, rugs): paint into the ground layer so
         # entities render on top of it, and skip shadow/rings/click-registration —
         # a floor tile is scenery an agent stands on, not a selectable entity.
-        renderer.floor_surface.blit(scaled_image, (px, draw_py))
+        renderer.floor_surface.blit(scaled_image, (px + shake_dx, draw_py + shake_dy))
         return
-    renderer.entity_surface.blit(scaled_image, (px, draw_py))
+    renderer.entity_surface.blit(scaled_image, (px + shake_dx, draw_py + shake_dy))
+    # click/selection registration uses the true, unshaken tile rect
     pygame_runtime(renderer).view.last_drawn_entity_rects[entity] = pygame.Rect(px, draw_py, sprite_size, draw_height)
     draw_selection_ring(renderer, entity, px, py, sprite_size)
     draw_focus_ring(renderer, entity, px, py, sprite_size)
+    if dynamic is not None:
+        if dynamic.effect is not None:
+            draw_dynamic_effect(renderer, dynamic, px + shake_dx, py + shake_dy, sprite_size, facing)
+        if dynamic.emote is not None:
+            draw_emote(renderer, dynamic.emote,
+                       px + sprite_size // 2 + shake_dx,
+                       draw_py - max(4, sprite_size // 8) + shake_dy,
+                       max(10, int(sprite_size * 0.42)))
 
     overlay_sprite = renderable.overlay_sprite
     overlay_mode = getattr(renderable, "overlay_mode", "badge")

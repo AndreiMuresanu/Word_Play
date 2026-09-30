@@ -7,6 +7,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 from word_play.presets.renderers.pygame_renderer.chrome import CHROMES, RUSTIC, resolve_chrome
 from word_play.presets.renderers.sprite_index import sprite_index, sprite_path_for_name
+from word_play.presets.renderers.dynamic_behaviours import resolve_dynamic_behaviour
 from word_play.presets.renderers.themes import (
     MISSING_ROLE_PREFIX,
     apply_theme_defaults,
@@ -65,6 +66,17 @@ def test_theme_defaults_never_rewrite_sprite_path():
     apply_theme_defaults(wall, theme)
     assert lamp.sprite_path == "lamp" and lamp.glow is not None
     assert wall.sprite_path == "wall" and wall.wall_set.endswith("timber_wall")
+
+
+def test_dynamic_behaviour_catalog_covers_archetype_activities():
+    for name in (
+        "fishing", "mining", "cooking", "cleaning", "planting", "harvesting",
+        "carrying", "rowing", "working", "mixing", "repairing", "scanning",
+        "attacking", "celebrating", "sitting", "sleeping", "watering",
+    ):
+        behaviour = resolve_dynamic_behaviour(name)
+        assert behaviour is not None, name
+        assert behaviour.pose, name
 
 
 def test_renderable_accepts_tint():

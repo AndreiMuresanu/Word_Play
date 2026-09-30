@@ -28,6 +28,11 @@ from .behaviours import (
     register_behaviour,
     resolve_behaviour,
 )
+from .dynamic_behaviours import (
+    Dynamic_Behaviour,
+    register_dynamic_behaviour,
+    resolve_dynamic_behaviour,
+)
 from .themes import Theme, available_themes, resolve_theme
 from .pygame_renderer.replay_and_live import (
     ReplayFrameEnvironment,
@@ -67,6 +72,9 @@ __all__ = [
     "register_behaviour",
     "resolve_behaviour",
     "apply_behaviour",
+    "Dynamic_Behaviour",
+    "register_dynamic_behaviour",
+    "resolve_dynamic_behaviour",
     "Renderer",
     "Renderer_State",
     "ReplayFrameEnvironment",

@@ -23,6 +23,11 @@ class Renderable(Component):
     the sprite in the ground layer with no shadow and lets an agent stand centred
     on top instead of being shoved side-by-side — the clean way to lay terrain an
     agent occupies (docks, bridges, rugs) without multi-gridding it.
+
+    ``action`` is the *dynamic* counterpart of ``behaviour``: a runtime state the
+    sim toggles (``renderable.action = "fishing"`` / ``= None``) that swaps to a
+    ``_<pose>`` sprite, locks facing, and can add a looping effect, emote, shake,
+    or impact burst while active. See ``dynamic_behaviours.py``.
     """
 
     def __init__(
@@ -41,12 +46,16 @@ class Renderable(Component):
         flicker: float = 0.0,
         smoke: bool = False,
         floor: bool = False,
+        action: str | None = None,
         tint: tuple[int, int, int] | None = None,
         tint_strength: float = 0.55,
     ):
         super().__init__()
         self.sprite_path = sprite_path
         self.behaviour = behaviour          # behaviour preset (see behaviours.py)
+        self.action = action                # active DYNAMIC behaviour, or None
+        #   (a runtime state the sim toggles: pose/facing/effect while active —
+        #   see dynamic_behaviours.py)
         self.glow = glow  # RGB light color; composited when the scene has ambient
         self.glow_radius = glow_radius      # in tiles
         self.glow_strength = glow_strength  # 1.0 = standard lamp
