@@ -10,6 +10,7 @@ from word_play.core import Entity
 from word_play.presets.systems.inventory import Inventory
 
 from .assets import (
+    animation_sibling,
     get_or_load_image,
     get_scaled_image,
     get_soft_shadow,
@@ -598,6 +599,27 @@ def draw_entity_items(
             renderer.effect_surface.blit(image, (draw_x, draw_y))
 
 
+def animated_sprite_name(
+    renderer: "Pygame_Renderer",
+    sprite_name: str,
+    *,
+    stagger: int = 0,
+) -> str:
+    """Swap in the '_2' frame on alternating ticks when a sibling exists."""
+    config = renderer.beautify
+    if not config.enabled or not config.animate:
+        return sprite_name
+    lowered = sprite_name.lower()
+    if any(fragment in lowered for fragment in config.animate_skip_fragments):
+        return sprite_name
+    sibling = animation_sibling(renderer, sprite_name)
+    if sibling is None:
+        return sprite_name
+    period = max(0.05, config.animation_period)
+    tick = int(time.monotonic() / period)
+    return sibling if (tick + stagger) % 2 else sprite_name
+
+
 def _shares_tile(renderable: Renderable) -> bool:
     """Walls and floor terrain never crowd a tile; everything else is offset
     side-by-side when several entities stand on the same tile."""
@@ -626,7 +648,10 @@ def draw_entity(
 ) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
     sprite_size = draw_size or renderer.tile_size
+    # resolve a bare name to its file first: the _2 sibling convention
+    # below works on real paths
     sprite_name = resolve_sprite(renderer.theme, sprite_name_override or renderable.sprite_path)
+    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=id(entity) >> 6)
     image = get_or_load_image(renderer, sprite_name)
     if image is None:
         sprite_name = placeholder(sprite_name, f"entity '{entity.name}'")
@@ -805,6 +830,9 @@ def draw_background_tile(
     else:
         sprite_name = resolve_sprite(renderer.theme, str(sprite_name))
 
+    # animation frame swap, staggered by position
+    tile_x, tile_y = int(item.get("x", 0)), int(item.get("y", 0))
+    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=tile_x + tile_y)
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
         # Draw placeholder square

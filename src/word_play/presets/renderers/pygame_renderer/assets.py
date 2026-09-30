@@ -110,6 +110,28 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
     return scaled
 
 
+def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str) -> str | None:
+    """Return ``foo<suffix>.png`` if it exists next to ``foo.png`` (cached).
+
+    The file-name conventions that need no authoring: ``_2`` (second animation
+    frame).
+    """
+    session = pygame_runtime(renderer).session
+    key = (suffix, sprite_name)
+    if key not in session.anim_sibling_cache:
+        sibling = None
+        if sprite_name.endswith(".png") and not sprite_name.endswith(("_2.png", f"{suffix}.png")):
+            candidate = f"{sprite_name[:-4]}{suffix}.png"
+            if any(path.is_file() for path in candidate_asset_paths(candidate)):
+                sibling = candidate
+        session.anim_sibling_cache[key] = sibling
+    return session.anim_sibling_cache[key]
+
+
+def animation_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_2")
+
+
 def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:
     """Return a cached, silhouette-derived contact shadow for a sprite at ``size``."""
     def build() -> Any | None:

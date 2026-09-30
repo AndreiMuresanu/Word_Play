@@ -68,6 +68,7 @@ class Pygame_Session_State:
     pygame_initialized: bool = False
     image_cache: dict[str, Any] = field(default_factory=dict)
     scaled_image_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(4096))
+    anim_sibling_cache: dict[tuple[str, str], str | None] = field(default_factory=dict)
     wall_set_cache: dict[str, dict[str, str]] = field(default_factory=dict)
     overlay_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(24))
     window_size: tuple[int, int] | None = None
