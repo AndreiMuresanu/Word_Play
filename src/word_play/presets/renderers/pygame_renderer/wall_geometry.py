@@ -26,13 +26,22 @@ def world_bounds(
     background_items: list[dict[str, Any]],
     renderables: list[tuple[int, Entity, Renderable]],
 ) -> tuple[int, int, int, int]:
-    """Compute the visible world bounds from background tiles and entities."""
+    """Compute the visible world bounds from background tiles and entities.
+
+    When an environment paints explicit background tiles, THEY define the
+    canvas: an entity wandering past the painted floor is culled rather than
+    stretching the world — otherwise every excursion resizes the window,
+    reshaping it between steps.
+    """
     xs: list[int] = []
     ys: list[int] = []
 
     for item in background_items:
         xs.append(int(item["x"]))
         ys.append(int(item["y"]))
+
+    if xs and ys:
+        return min(xs), max(xs), min(ys), max(ys)
 
     for _, entity, _ in renderables:
         try:
