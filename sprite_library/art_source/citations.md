@@ -59,3 +59,10 @@ This document tracks the origin and licensing of the pixel art assets used in th
   - `src/world_tiles/indoors/floors/brick_floor.png` - Custom brick floor tile
 * **License:** Custom, based on DawnLike style
 
+
+## Generated Packs
+
+### interactive_city (procedural)
+* **Author:** generated in-repo by `sprite_library/scripts/pixelgen/` (no external art).
+* **Contents:** full town tileset — terrain, buildings, walls, furniture, props, and 8 villagers (`src/generated/interactive_city`).
+* **License:** same as the repository; regenerate with `python -m sprite_library.scripts.pixelgen.generate --pack interactive_city`.

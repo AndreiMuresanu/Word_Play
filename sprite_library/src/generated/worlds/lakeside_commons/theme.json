@@ -1,0 +1,56 @@
+{
+  "manifest_version": 1,
+  "name": "lakeside_commons",
+  "extends": "interactive_city",
+  "root": "sprite_library/src/generated/worlds/interactive_city",
+  "roles": {
+    "default_floor": "shore_grass.png",
+    "grass": "shore_grass.png",
+    "path": "shore_sand.png",
+    "water": "lake_water.png",
+    "lake": "lake_water.png",
+    "lake_fish": "lake_fish.png",
+    "lake_bed": "lake_bed.png",
+    "sand": "shore_sand.png",
+    "trail": "park_path.png",
+    "dock": "dock.png",
+    "rowboat": "rowboat.png",
+    "reeds": "reeds.png",
+    "fish_basket": "fish_basket.png",
+    "lodge": "lodge.png",
+    "catch_splash": "catch_splash.png",
+    "villager_cafe_owner_fishing": "cafe_owner_fishing.png",
+    "villager_baker_fishing": "baker_fishing.png",
+    "villager_florist_fishing": "florist_fishing.png",
+    "villager_bookseller_fishing": "bookseller_fishing.png",
+    "villager_carpenter_fishing": "carpenter_fishing.png",
+    "villager_courier_fishing": "courier_fishing.png",
+    "villager_gardener_fishing": "gardener_fishing.png",
+    "villager_artist_fishing": "artist_fishing.png"
+  },
+  "role_glow": {
+    "lodge": [
+      [
+        255,
+        206,
+        140
+      ],
+      2.4,
+      1.1
+    ]
+  },
+  "role_smoke": [
+    "lodge"
+  ],
+  "ground_precedence": {
+    "lake": 0,
+    "water": 0,
+    "lake_fish": 0,
+    "lake_bed": 1,
+    "sand": 2,
+    "path": 2,
+    "trail": 3,
+    "plaza": 3,
+    "grass": 4
+  }
+}
