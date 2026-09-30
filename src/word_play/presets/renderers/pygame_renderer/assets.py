@@ -56,12 +56,39 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
 
 
 def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
-    """Choose the best wall sprite variant for a tile based on neighbors."""
+    """Choose the best wall sprite variant for a tile based on neighbors.
+
+    Memoized per (set, cardinal connections): the variant choice depends only
+    on which of the four cardinal neighbors are walls, so the filesystem probe
+    and scoring scan run at most once per distinct pattern per set.
+    """
     session = pygame_runtime(renderer).session
-    candidate_roots = candidate_asset_paths(wall_set)
-    wall_root = next((path for path in candidate_roots if path.exists() and path.is_dir()), None)
+    connections = wall_connections(neighbors)
+    variant_key = (wall_set, connections)
+    if variant_key in session.wall_variant_cache:
+        return session.wall_variant_cache[variant_key]
+
+    result = _resolve_wall_sprite_uncached(renderer, wall_set, neighbors, connections)
+    session.wall_variant_cache[variant_key] = result
+    return result
+
+
+def _resolve_wall_sprite_uncached(
+    renderer: "Pygame_Renderer",
+    wall_set: str,
+    neighbors: dict[str, bool],
+    connections: tuple[str, ...],
+) -> str | None:
+    session = pygame_runtime(renderer).session
+    wall_root = session.wall_root_cache.get(wall_set)
     if wall_root is None:
-        raise FileNotFoundError(f"Wall set folder could not be resolved: '{wall_set}'.")
+        wall_root = next(
+            (path for path in candidate_asset_paths(wall_set) if path.exists() and path.is_dir()),
+            None,
+        )
+        if wall_root is None:
+            raise FileNotFoundError(f"Wall set folder could not be resolved: '{wall_set}'.")
+        session.wall_root_cache[wall_set] = wall_root
 
     available = session.wall_set_cache.get(wall_set)
     if available is None:
@@ -76,7 +103,7 @@ def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: d
     if target_variant in available:
         return f"{wall_set}/{available[target_variant]}"
 
-    target_connections = set(wall_connections(neighbors))
+    target_connections = set(connections)
     if len(target_connections) == 1:
         axis_fallback = "up_down" if next(iter(target_connections)) in {"up", "down"} else "left_right"
         if axis_fallback in available:

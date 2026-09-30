@@ -1173,28 +1173,34 @@ def auto_tiled_wall_sprites(
     env: "Environment",
     renderables: list[tuple[int, Entity, Any]],
 ) -> dict[Entity, str]:
-    """Resolve draw-time wall sprite overrides without mutating Renderable."""
+    """Resolve draw-time wall sprite overrides without mutating Renderable.
+
+    Walls essentially never move, so the resolved mapping is cached and reused
+    until any wall entity, position, or set changes.
+    """
+    session = pygame_runtime(renderer).session
     wall_positions: set[tuple[int, int]] = set()
-    wall_entities: list[tuple[Entity, Any]] = []
+    wall_entities: list[tuple[Entity, Any, tuple[int, int]]] = []
     for _, entity, renderable in renderables:
         if renderable.wall_set is not None and "wall" in entity.tags:
             world_position = entity_world_position(renderer, env, entity)
             if world_position is None:
                 continue
-            wx, wy = world_position
-            wall_positions.add((wx, wy))
-            wall_entities.append((entity, renderable))
+            wall_positions.add(world_position)
+            wall_entities.append((entity, renderable, world_position))
+
+    cache_key = tuple((id(entity), renderable.wall_set, position) for entity, renderable, position in wall_entities)
+    if cache_key == session.wall_override_key:
+        return session.wall_override_result
 
     resolved_sprites: dict[Entity, str] = {}
-    for entity, renderable in wall_entities:
-        world_position = entity_world_position(renderer, env, entity)
-        if world_position is None:
-            continue
-        wx, wy = world_position
+    for entity, renderable, (wx, wy) in wall_entities:
         neighbors = wall_neighbor_mask(wx, wy, wall_positions)
         resolved = resolve_wall_sprite(renderer, renderable.wall_set, neighbors)
         if resolved is not None:
             resolved_sprites[entity] = resolved
+    session.wall_override_key = cache_key
+    session.wall_override_result = resolved_sprites
     return resolved_sprites
 
 
@@ -1276,12 +1282,26 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
     chrome = active_chrome(renderer)
     renderer.screen.fill(chrome.backdrop)
-    renderer.floor_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
-    renderer.shadow_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
-    renderer.entity_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
-    renderer.effect_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
+    # Layer surfaces persist across frames (cleared, not reallocated): four
+    # full-screen SRCALPHA allocations per frame were the largest source of
+    # allocator churn and frame-time spikes.
+    session = runtime.session
+    layer_size = (world_width, world_height)
+    if session.layer_size != layer_size:
+        session.layer_size = layer_size
+        session.layer_surfaces = {
+            name: pygame.Surface(layer_size, pygame.SRCALPHA)
+            for name in ("floor", "shadow", "entity", "effect")
+        }
+    renderer.floor_surface = session.layer_surfaces["floor"]
+    renderer.shadow_surface = session.layer_surfaces["shadow"]
+    renderer.entity_surface = session.layer_surfaces["entity"]
+    renderer.effect_surface = session.layer_surfaces["effect"]
     renderer.world_surface = renderer.floor_surface
     renderer.floor_surface.fill(chrome.backdrop)
+    renderer.shadow_surface.fill((0, 0, 0, 0))
+    renderer.entity_surface.fill((0, 0, 0, 0))
+    renderer.effect_surface.fill((0, 0, 0, 0))
     view.last_drawn_entity_rects = {}
 
     renderer.tile_size = active_tile_size

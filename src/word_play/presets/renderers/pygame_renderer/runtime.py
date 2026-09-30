@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
@@ -70,6 +71,19 @@ class Pygame_Session_State:
     wall_set_cache: dict[str, dict[str, str]] = field(default_factory=dict)
     overlay_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(24))
     window_size: tuple[int, int] | None = None
+    # Persistent per-frame layer surfaces (floor/shadow/entity/effect), reused
+    # across frames instead of reallocated — the single largest allocation churn.
+    layer_surfaces: dict[str, Any] = field(default_factory=dict)
+    layer_size: tuple[int, int] | None = None
+    # Wall autotiling memoization: set name -> resolved root, and
+    # (set name, cardinal connections) -> chosen sprite variant.
+    wall_root_cache: dict[str, Any] = field(default_factory=dict)
+    wall_variant_cache: dict[tuple[str, tuple[str, ...]], str | None] = field(default_factory=dict)
+    # auto_tiled_wall_sprites result, keyed by the wall entities' identity/layout.
+    wall_override_key: Any = None
+    wall_override_result: dict[Any, str] = field(default_factory=dict)
+    # fitted_tile_size memo keyed by (grid, sidebar, hud, desktop, base tile).
+    fit_cache: dict[tuple, int] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -195,22 +209,33 @@ def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
         ]
 
 
+_desktop_cache: tuple[float, tuple[int, int]] | None = None
+
+
 def desktop_size() -> tuple[int, int]:
-    """Return the primary desktop size using display APIs meant for monitor geometry."""
+    """Return the primary desktop size using display APIs meant for monitor geometry.
+
+    Cached with a short TTL — this used to issue an SDL display query per frame.
+    """
+    global _desktop_cache
+    now = time.monotonic()
+    if _desktop_cache is not None and now - _desktop_cache[0] < 2.0:
+        return _desktop_cache[1]
+
+    size = (1440, 900)
     try:
         sizes = pygame.display.get_desktop_sizes()
-        if sizes:
-            width, height = sizes[0]
-            if width > 0 and height > 0:
-                return int(width), int(height)
     except Exception:
-        pass
+        sizes = []
+    if sizes and sizes[0][0] > 0 and sizes[0][1] > 0:
+        size = (int(sizes[0][0]), int(sizes[0][1]))
+    else:
+        info = pygame.display.Info()
+        if info.current_w > 0 and info.current_h > 0:
+            size = (int(info.current_w), int(info.current_h))
 
-    info = pygame.display.Info()
-    if info.current_w > 0 and info.current_h > 0:
-        return int(info.current_w), int(info.current_h)
-
-    return 1440, 900
+    _desktop_cache = (now, size)
+    return size
 
 
 def fitted_tile_size(
@@ -223,6 +248,35 @@ def fitted_tile_size(
 ) -> int:
     """Choose a tile size that fits the display while keeping small scenes legible."""
     screen_w, screen_h = desktop_size()
+    base_tile_memo = max(16, int(getattr(renderer, "base_tile_size", renderer.tile_size)))
+    session = pygame_runtime(renderer).session
+    memo_key = (grid_width, grid_height, sidebar_width, hud_visible, screen_w, screen_h, base_tile_memo)
+    memoized = session.fit_cache.get(memo_key)
+    if memoized is not None:
+        return memoized
+    result = _fit_tile_size(
+        renderer,
+        grid_width=grid_width,
+        grid_height=grid_height,
+        sidebar_width=sidebar_width,
+        hud_visible=hud_visible,
+        screen_w=screen_w,
+        screen_h=screen_h,
+    )
+    session.fit_cache[memo_key] = result
+    return result
+
+
+def _fit_tile_size(
+    renderer: "Pygame_Renderer",
+    *,
+    grid_width: int,
+    grid_height: int,
+    sidebar_width: int,
+    hud_visible: bool,
+    screen_w: int,
+    screen_h: int,
+) -> int:
     max_width = max(640, screen_w - renderer.display_safe_margin)
     max_height = max(480, screen_h - renderer.display_safe_margin)
     min_width = max(420, screen_w // 2)
