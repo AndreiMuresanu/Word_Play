@@ -173,6 +173,85 @@ def get_emissive_overlay(
     return cache.get_or_build(("__emissive__", sibling, width, height, bucket), build)
 
 
+_FRINGE_DEPTH = 0.30    # fraction of a tile the softer material overhangs
+
+
+def _fringe_mask(renderer: "Pygame_Renderer", direction: str, size: int) -> pygame.Surface:
+    """A white alpha-gradient mask for one tile edge, with a scalloped border.
+
+    ``direction`` names the edge of the RECEIVING tile the fringe hugs:
+    "n" fades downward from the top edge, "w" rightward from the left, etc.
+    """
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__fringe_mask__", direction, size), lambda: _build_fringe_mask(direction, size))
+
+
+def _build_fringe_mask(direction: str, size: int) -> pygame.Surface:
+    depth = max(2, int(size * _FRINGE_DEPTH))
+    mask = pygame.Surface((size, size), pygame.SRCALPHA)
+    for lane in range(size):
+        # deterministic per-lane jitter: an organic scallop, not a ruler line
+        h = (lane * 2654435761 + size * 97) & 0xFFFFFFFF
+        lane_depth = depth + (h % 3) - 1
+        for d in range(lane_depth):
+            fade = 1.0 - d / max(1, lane_depth)
+            alpha = int(235 * fade * fade)
+            if direction == "n":
+                mask.set_at((lane, d), (255, 255, 255, alpha))
+            elif direction == "s":
+                mask.set_at((lane, size - 1 - d), (255, 255, 255, alpha))
+            elif direction == "w":
+                mask.set_at((d, lane), (255, 255, 255, alpha))
+            else:
+                mask.set_at((size - 1 - d, lane), (255, 255, 255, alpha))
+    return mask
+
+
+def get_fringe_strip(
+    renderer: "Pygame_Renderer",
+    sprite_name: str,
+    direction: str,
+    size: int,
+) -> Any | None:
+    """The softer neighbor's texture masked to overhang one edge of a tile.
+
+    Baked once per (sprite, edge, size): tile texture x edge mask via
+    BLEND_RGBA_MULT — soft ground transitions with zero extra art in the pack.
+    """
+    def build() -> Any | None:
+        tile = get_scaled_image(renderer, sprite_name, size, size)
+        if tile is None:
+            return None
+        strip = tile.convert_alpha().copy()
+        strip.blit(_fringe_mask(renderer, direction, size), (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        return strip
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__fringe__", sprite_name, direction, size), build)
+
+
+def ground_variant_name(renderer: "Pygame_Renderer", sprite_name: str, x: int, y: int) -> str:
+    """Deterministically vary a ground tile when '_b'/'_c' siblings exist.
+
+    Large fields of one repeated tile read as wallpaper; if a pack ships
+    ``foo_b.png``/``foo_c.png`` next to ``foo.png``, tiles pick between them by
+    position hash (base kept dominant) — stable across frames, zero authoring.
+    """
+    variants = [
+        variant
+        for suffix, other in (("_b", "_c.png"), ("_c", "_b.png"))
+        if (variant := _sibling(renderer, sprite_name, suffix, exclude=(other,))) is not None
+    ]
+    if not variants:
+        return sprite_name
+
+    h = (x * 73856093) ^ (y * 19349663) ^ (len(sprite_name) * 83492791)
+    roll = (h & 0xFFFF) % 10
+    if roll < 6:
+        return sprite_name                       # base stays dominant
+    return variants[roll % len(variants)]
+
+
 def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:
     """Return a cached, silhouette-derived contact shadow for a sprite at ``size``."""
     def build() -> Any | None:

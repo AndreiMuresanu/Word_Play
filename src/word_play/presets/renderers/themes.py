@@ -43,6 +43,9 @@ class Theme:
     role_glow: dict[str, tuple[tuple[int, int, int], float, float]] = field(default_factory=dict)
     # roles that send up a drift of chimney smoke (drawn automatically)
     role_smoke: frozenset = frozenset()
+    # ground roles that fringe over lower-ranked neighbors (soft tile transitions);
+    # higher rank paints its edge onto the adjacent lower-ranked tile.
+    ground_precedence: dict[str, int] = field(default_factory=dict)
     # UI chrome style for panels/text drawn around the world ("rustic", "slate",
     # "minimal"); None = the renderer's default.
     chrome: str | None = None
@@ -88,6 +91,8 @@ def theme_from_manifest(manifest_path: Path, *, name: str | None = None) -> Them
         role_glow[role] = (tuple(int(c) for c in color), float(radius), float(strength))
     role_smoke = set(base.role_smoke) if base else set()
     role_smoke.update(data.get("role_smoke", []))
+    ground_precedence = dict(base.ground_precedence) if base else {}
+    ground_precedence.update(data.get("ground_precedence", {}))
     chrome = data.get("chrome") or (base.chrome if base else None)
 
     return Theme(
@@ -97,6 +102,7 @@ def theme_from_manifest(manifest_path: Path, *, name: str | None = None) -> Them
         wall_roles=wall_roles,
         role_glow=role_glow,
         role_smoke=frozenset(role_smoke),
+        ground_precedence=ground_precedence,
         chrome=chrome,
     )
 

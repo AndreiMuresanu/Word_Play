@@ -13,9 +13,11 @@ from .assets import (
     animation_sibling,
     back_sibling,
     get_emissive_overlay,
+    get_fringe_strip,
     get_or_load_image,
     get_scaled_image,
     get_soft_shadow,
+    ground_variant_name,
     pose_sibling,
     resolve_wall_sprite,
 )
@@ -1096,8 +1098,9 @@ def draw_background_tile(
     else:
         sprite_name = resolve_sprite(renderer.theme, str(sprite_name))
 
-    # animation frame swap, staggered by position
+    # positional variety first (grass patches etc.), then animation frame swap
     tile_x, tile_y = int(item.get("x", 0)), int(item.get("y", 0))
+    sprite_name = ground_variant_name(renderer, sprite_name, tile_x, tile_y)
     sprite_name = animated_sprite_name(renderer, sprite_name, stagger=tile_x + tile_y)
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
@@ -1506,6 +1509,61 @@ def _render_lightmap(
     return full
 
 
+_FRINGE_EDGES = (("w", -1, 0), ("e", 1, 0), ("n", 0, 1), ("s", 0, -1))
+
+
+def draw_ground_fringes(
+    renderer: "Pygame_Renderer",
+    theme: Any,
+    background: list[dict[str, Any]],
+    visible_background: list[dict[str, Any]],
+    *,
+    min_x: int,
+    max_y: int,
+    offset_x: int,
+    offset_y: int,
+) -> None:
+    """Soften ground-material seams: higher-precedence roles overhang lower ones.
+
+    Grass laps over paths, paths feather into plazas — synthesized by masking
+    the neighbor's own texture with a scalloped edge (no transition art in the
+    pack, no authoring; precedence is data on the Theme).
+    """
+    precedence = getattr(theme, "ground_precedence", None)
+    if not precedence:
+        return
+    sprite_to_role = {
+        theme.sprite(role): role for role in precedence if theme.sprite(role) is not None
+    }
+    role_at: dict[tuple[int, int], str] = {}
+    for item in background:
+        if item.get("kind") == "wall":
+            continue
+        role = sprite_to_role.get(item.get("sprite"))
+        if role is not None:
+            role_at[(int(item["x"]), int(item["y"]))] = role
+    if not role_at:
+        return
+
+    for item in visible_background:
+        x, y = int(item["x"]), int(item["y"])
+        own = role_at.get((x, y))
+        if own is None:
+            continue
+        own_rank = precedence[own]
+        px, py = screen_rect_for_tile(renderer, x, y, min_x, max_y)
+        px += offset_x
+        py += offset_y
+        # world +y is north (up-screen), so the (0, 1) neighbor fringes our top edge
+        for direction, dx, dy in _FRINGE_EDGES:
+            neighbor = role_at.get((x + dx, y + dy))
+            if neighbor is None or precedence[neighbor] <= own_rank:
+                continue
+            strip = get_fringe_strip(renderer, theme.sprite(neighbor), direction, renderer.tile_size)
+            if strip is not None:
+                renderer.floor_surface.blit(strip, (px, py))
+
+
 def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: int, world_height: int) -> None:
     """Apply a subtle darkening toward the edges of the world view."""
     cache_key = (world_width, world_height)
@@ -1886,6 +1944,18 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             px += view_offset_x
             py += view_offset_y
             draw_background_tile(renderer, item, px, py, wall_positions=wall_positions)
+
+        if theme is not None:
+            draw_ground_fringes(
+                renderer,
+                theme,
+                background,
+                visible_background,
+                min_x=min_x,
+                max_y=max_y,
+                offset_x=view_offset_x,
+                offset_y=view_offset_y,
+            )
 
         wall_sprite_overrides = auto_tiled_wall_sprites(renderer, env, renderables)
 
