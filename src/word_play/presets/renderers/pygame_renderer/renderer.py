@@ -26,6 +26,7 @@ class Pygame_Renderer(Renderer):
         tile_size: int = 32,
         default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
         extractors: Sequence[Render_Extractor] | None = None,
+        mood: "str | None" = None,
         chrome: "str | None" = None,
     ):
         self.render_context: Render_Context = self.create_render_context()
@@ -36,6 +37,10 @@ class Pygame_Renderer(Renderer):
         )
         # UI chrome: explicit argument wins, else rustic.
         self.chrome_theme = resolve_chrome(chrome)
+        if mood is not None:
+            from .beautify import apply_mood
+
+            apply_mood(self.beautify, mood)
         self.default_floor_sprite = default_floor_sprite
         self.extractors: list[Render_Extractor] = list(extractors or default_pygame_extractors(layout))
 

@@ -15,6 +15,8 @@ class Renderable(Component):
         overlay_mode: str = "badge",
         overlay_scale: float | None = None,
         wall_set: str | None = None,
+        tint: tuple[int, int, int] | None = None,
+        tint_strength: float = 0.55,
     ):
         super().__init__()
         self.sprite_path = sprite_path
@@ -24,3 +26,9 @@ class Renderable(Component):
         self.overlay_sprite = overlay_sprite
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
+        # team/ownership recolor: multiply the sprite toward `tint` (preserves
+        # the ink outline). One field covers CTF teams, coin ownership, berry
+        # colors, gem grades — no per-variant art needed.
+        self.tint = tint
+        self.tint_strength = tint_strength
+

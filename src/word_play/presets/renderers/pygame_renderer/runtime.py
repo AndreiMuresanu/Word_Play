@@ -136,6 +136,9 @@ def configure_renderer(
     renderer.render_context.private[_PYGAME_RUNTIME_KEY] = Pygame_Runtime_State()
     runtime = pygame_runtime(renderer)
     renderer.layout = layout
+    from .beautify import Beautify_Config
+
+    renderer.beautify = Beautify_Config()
     renderer.base_tile_size = tile_size
     renderer.display_safe_margin = 72
     apply_renderer_metrics(renderer, tile_size)

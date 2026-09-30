@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from .beautify import build_soft_shadow, harmonize_surface
 from .runtime import pygame_runtime
 from .wall_geometry import adjacent_wall_variant_name, wall_connections
 
@@ -31,6 +32,7 @@ def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | No
     for path in candidate_asset_paths(sprite_name):
         if path.exists() and path.is_file():
             surface = pygame.image.load(str(path)).convert_alpha()
+            surface = harmonize_surface(surface, sprite_name, renderer.beautify)
             session.image_cache[sprite_name] = surface
             return surface
 
@@ -53,6 +55,16 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
     scaled = pygame.transform.scale(image, (width, height))
     session.scaled_image_cache[cache_key] = scaled
     return scaled
+
+
+def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:
+    """Return a cached, silhouette-derived contact shadow for a sprite at ``size``."""
+    def build() -> Any | None:
+        scaled = get_scaled_image(renderer, sprite_name, size, size)
+        return None if scaled is None else build_soft_shadow(scaled, renderer.beautify)
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__shadow__", sprite_name, size), build)
 
 
 def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:

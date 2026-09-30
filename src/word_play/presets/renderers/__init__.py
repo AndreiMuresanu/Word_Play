@@ -36,12 +36,20 @@ _LAZY_EXPORT_MODULES = {
     "Pygame_Renderer": ".pygame_renderer.renderer",
     "render_environment": ".pygame_renderer.draw",
     "init_pygame_if_needed": ".pygame_renderer.runtime",
+    "Beautify_Config": ".pygame_renderer.beautify",
+    "MOODS": ".pygame_renderer.beautify",
+    "Mood": ".pygame_renderer.beautify",
+    "apply_mood": ".pygame_renderer.beautify",
 }
 
 
 __all__ = [
+    "Beautify_Config",
     "ExperimentRecorder",
     "Grid_Layout_Adapter",
+    "MOODS",
+    "Mood",
+    "apply_mood",
     "Position_Layout_Adapter",
     "Render_Context",
     "Render_Event",

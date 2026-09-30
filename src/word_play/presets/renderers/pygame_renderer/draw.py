@@ -9,7 +9,12 @@ import pygame
 from word_play.core import Entity
 from word_play.presets.systems.inventory import Inventory
 
-from .assets import get_or_load_image, get_scaled_image, resolve_wall_sprite
+from .assets import (
+    get_or_load_image,
+    get_scaled_image,
+    get_soft_shadow,
+    resolve_wall_sprite,
+)
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
@@ -605,15 +610,40 @@ def draw_entity(
         raise FileNotFoundError(
             f"Sprite renderer expected a valid sprite path for '{entity.name}', but could not resolve '{sprite_name}'."
         )
+    # team/ownership recolor: multiply toward the tint hue (keeps the ink
+    # outline dark, unlike an additive flash) — cached per sprite state
+    tint = renderable.tint
+    if tint is not None:
+        tint_strength = max(0.0, min(1.0, renderable.tint_strength))
+        if tint_strength > 0.0:
+            untinted = scaled_image
+
+            def build_tinted() -> Any:
+                tinted = untinted.copy()
+                mult = tuple(int(255 - tint_strength * (255 - int(c))) for c in tint)
+                tinted.fill((*mult, 255), special_flags=pygame.BLEND_RGB_MULT)
+                return tinted
+
+            cache = pygame_runtime(renderer).session.scaled_image_cache
+            tint_key = (
+                "__tint__", sprite_name, sprite_size,
+                tuple(tint), round(tint_strength, 2),
+            )
+            scaled_image = cache.get_or_build(tint_key, build_tinted)
     flash_until = pygame_runtime(renderer).effects.damage_flash_until.get(entity, 0.0)
     if flash_until > time.monotonic():
         scaled_image = flash_tinted_surface(scaled_image, tint=(190, 20, 20), alpha=140)
     is_wall = renderable.wall_set is not None
     if not is_wall:
-        shadow_width = max(14, int(sprite_size * 0.72))
-        shadow_height = max(8, int(sprite_size * 0.24))
-        shadow = pygame.Surface((shadow_width, shadow_height), pygame.SRCALPHA)
-        pygame.draw.ellipse(shadow, (0, 0, 0, 72), shadow.get_rect())
+        soft_shadow = get_soft_shadow(renderer, sprite_name, sprite_size)
+        if soft_shadow is not None:
+            shadow_width, shadow_height = soft_shadow.get_size()
+            shadow = soft_shadow
+        else:
+            shadow_width = max(14, int(sprite_size * 0.72))
+            shadow_height = max(8, int(sprite_size * 0.24))
+            shadow = pygame.Surface((shadow_width, shadow_height), pygame.SRCALPHA)
+            pygame.draw.ellipse(shadow, (0, 0, 0, 72), shadow.get_rect())
         shadow_x = px + (sprite_size - shadow_width) // 2
         shadow_y = py + sprite_size - shadow_height // 2 - max(2, sprite_size // 12)
         renderer.shadow_surface.blit(shadow, (shadow_x, shadow_y))
