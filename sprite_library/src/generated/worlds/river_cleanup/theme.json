@@ -1,0 +1,29 @@
+{
+  "extends": "wildlands",
+  "manifest_version": 1,
+  "name": "river_cleanup",
+  "roles": {
+    "cleanup_crew_sign": "cleanup_crew_sign.png",
+    "debris_bottle": "debris_bottle.png",
+    "debris_bottle_b": "debris_bottle_b.png",
+    "debris_bottle_pile_a": "debris_bottle_pile_a.png",
+    "debris_bottle_pile_b": "debris_bottle_pile_b.png",
+    "debris_bottle_pile_c": "debris_bottle_pile_c.png",
+    "debris_bottle_pile_d": "debris_bottle_pile_d.png",
+    "debris_can": "debris_can.png",
+    "debris_can_b": "debris_can_b.png",
+    "debris_net": "debris_net.png",
+    "debris_scatter_a": "debris_scatter_a.png",
+    "debris_scatter_b": "debris_scatter_b.png",
+    "debris_scatter_c": "debris_scatter_c.png",
+    "debris_scatter_d": "debris_scatter_d.png",
+    "debris_tire": "debris_tire.png",
+    "debris_tire_dark": "debris_tire_dark.png",
+    "river_polluted": "river_polluted.png",
+    "river_polluted_2": "river_polluted_2.png",
+    "river_polluted_deep": "river_polluted_deep.png",
+    "river_polluted_deep_2": "river_polluted_deep_2.png",
+    "river_polluted_shallow": "river_polluted_shallow.png",
+    "river_polluted_shallow_2": "river_polluted_shallow_2.png"
+  }
+}
