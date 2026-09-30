@@ -10,6 +10,8 @@ from word_play.core import Entity
 from word_play.presets.systems.inventory import Inventory
 
 from .assets import get_or_load_image, get_scaled_image, resolve_wall_sprite
+from .chrome import active_chrome
+from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
 from .renderable import Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size, focused_radius, pygame_runtime
@@ -320,7 +322,7 @@ def draw_focus_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: in
         return
     entity_size = renderer.tile_size if size is None else size
     ring_rect = pygame.Rect(px - 4, py - 4, entity_size + 8, entity_size + 8)
-    pygame.draw.rect(renderer.effect_surface, renderer.focus_outline_color, ring_rect, width=3, border_radius=10)
+    pygame.draw.rect(renderer.effect_surface, active_chrome(renderer).focus, ring_rect, width=3, border_radius=10)
 
 
 def draw_selection_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py: int, size: int | None = None) -> None:
@@ -330,9 +332,9 @@ def draw_selection_ring(renderer: "Pygame_Renderer", entity: Entity, px: int, py
     entity_size = renderer.tile_size if size is None else size
     ring_rect = pygame.Rect(px - 7, py - 7, entity_size + 14, entity_size + 14)
     glow = pygame.Surface((ring_rect.width + 12, ring_rect.height + 12), pygame.SRCALPHA)
-    pygame.draw.rect(glow, (*renderer.selection_outline_color, 58), glow.get_rect(), width=8, border_radius=16)
+    pygame.draw.rect(glow, (*active_chrome(renderer).selection, 58), glow.get_rect(), width=8, border_radius=16)
     renderer.effect_surface.blit(glow, (ring_rect.x - 6, ring_rect.y - 6))
-    pygame.draw.rect(renderer.effect_surface, renderer.selection_outline_color, ring_rect, width=3, border_radius=12)
+    pygame.draw.rect(renderer.effect_surface, active_chrome(renderer).selection, ring_rect, width=3, border_radius=12)
 
 
 def draw_selected_entity_card(
@@ -356,30 +358,31 @@ def draw_selected_entity_card(
     )
     stats = entity_primary_stats(inspected, env)
     inventory_entries = entity_inventory_entries(inspected)
+    chrome = active_chrome(renderer)
     title_font = renderer.hud_font
     body_font = renderer.small_font
     metrics = selected_card_metrics(renderer, stat_count=len(stats), inventory_line_count=min(4, len(inventory_entries)))
-    name_surface = title_font.render(inspected.name, True, (244, 247, 252))
+    name_surface = render_text(title_font, inspected.name, chrome.text_on_card)
     subtitle = "Agent" if inspected.is_agent else "Entity"
-    subtitle_surface = body_font.render(subtitle, True, (155, 205, 255))
+    subtitle_surface = render_text(body_font, subtitle, chrome.accent_deep)
 
     stat_surfaces = []
-    label_color = (124, 182, 255)
-    value_color = (220, 226, 235)
+    label_color = chrome.accent_deep
+    value_color = chrome.text_on_card
     for label, value in stats:
         stat_surfaces.append(
             (
-                body_font.render(f"{label}:", True, label_color),
-                body_font.render(str(value), True, value_color),
+                render_text(body_font, f"{label}:", label_color),
+                render_text(body_font, str(value), value_color),
             )
         )
-    inventory_header_surface = body_font.render("Inventory:", True, (232, 208, 164)) if inventory_entries else None
+    inventory_header_surface = render_text(body_font, "Inventory:", chrome.accent_deep) if inventory_entries else None
     inventory_item_surfaces = []
     for entry in inventory_entries[:4]:
         item_name = str(entry.get("name", "Item"))
         item_count = int(entry.get("count", 0))
         line = f"- {item_name} x{item_count}" if item_count > 1 else f"- {item_name}"
-        inventory_item_surfaces.append(body_font.render(line, True, (189, 196, 206)))
+        inventory_item_surfaces.append(render_text(body_font, line, chrome.text_on_card_soft))
 
     portrait_size = metrics["portrait_size"]
     line_gap = metrics["line_gap"]
@@ -423,15 +426,6 @@ def draw_selected_entity_card(
     pygame.draw.rect(shadow, (0, 0, 0, 92), shadow.get_rect(), border_radius=18)
     renderer.effect_surface.blit(shadow, shadow_rect.topleft)
 
-    pygame.draw.rect(renderer.effect_surface, (24, 30, 42, 238), card_rect, border_radius=metrics["corner_radius"])
-    pygame.draw.rect(
-        renderer.effect_surface,
-        renderer.selection_panel_accent,
-        card_rect,
-        width=2,
-        border_radius=metrics["corner_radius"],
-    )
-
     tail_anchor_x = entity_rect.centerx
     tail_anchor_x = max(card_rect.left + 24, min(tail_anchor_x, card_rect.right - 24))
     tail = [
@@ -439,8 +433,9 @@ def draw_selected_entity_card(
         (tail_anchor_x + 12, card_rect.bottom - 2),
         (entity_rect.centerx, entity_rect.top - 8),
     ]
-    pygame.draw.polygon(renderer.effect_surface, (24, 30, 42, 238), tail)
-    pygame.draw.polygon(renderer.effect_surface, renderer.selection_panel_accent, tail, width=2)
+    pygame.draw.polygon(renderer.effect_surface, chrome.card, tail)
+    pygame.draw.polygon(renderer.effect_surface, chrome.card_edge, tail, width=2)
+    chrome.draw_card(renderer.effect_surface, card_rect, radius=metrics["corner_radius"])
 
     portrait_rect = pygame.Rect(
         card_rect.x + metrics["outer_pad"],
@@ -448,8 +443,8 @@ def draw_selected_entity_card(
         portrait_size,
         portrait_size,
     )
-    pygame.draw.rect(renderer.effect_surface, (39, 48, 66), portrait_rect, border_radius=14)
-    pygame.draw.rect(renderer.effect_surface, (86, 101, 132), portrait_rect, width=1, border_radius=14)
+    pygame.draw.rect(renderer.effect_surface, chrome.panel, portrait_rect, border_radius=14)
+    pygame.draw.rect(renderer.effect_surface, chrome.panel_edge_hi, portrait_rect, width=1, border_radius=14)
 
     sprite_name = None
     renderable = renderable_component(inspected)
@@ -763,10 +758,10 @@ def draw_hud_panel(renderer: "Pygame_Renderer", scene: Any, x_offset: int, width
     if not bool(scene_metadata(scene, "ui.hud_visible", True)):
         return
 
+    chrome = active_chrome(renderer)
     hud_top = height - renderer.hud_height
     panel_rect = pygame.Rect(x_offset, hud_top, width, renderer.hud_height)
-    pygame.draw.rect(renderer.screen, (14, 17, 24), panel_rect)
-    pygame.draw.line(renderer.screen, (52, 63, 79), (x_offset, hud_top), (x_offset + width, hud_top), 2)
+    chrome.draw_panel(renderer.screen, panel_rect, edge_top=True)
 
     # Step counter and mode
     step = scene_metadata(scene, "simulation.step", 0)
@@ -785,7 +780,7 @@ def draw_hud_panel(renderer: "Pygame_Renderer", scene: Any, x_offset: int, width
     if current_phase is not None:
         header_text += f" | Mode: {current_phase}"
 
-    header = renderer.hud_font.render(str(header_text), True, (240, 242, 245))
+    header = render_text(renderer.hud_font, str(header_text), chrome.text_on_panel)
     renderer.screen.blit(header, (x_offset + renderer.margin, hud_top + 16))
 
     # Controls hint - minimal
@@ -802,97 +797,8 @@ def draw_hud_panel(renderer: "Pygame_Renderer", scene: Any, x_offset: int, width
             "Terminal: wheel/PgUp/PgDn scroll | R: reset | ESC: exit"
         )
     for line_index, line in enumerate(wrap_text_lines(renderer.small_font, controls_text, width - renderer.margin * 2)[:2]):
-        controls = renderer.small_font.render(line, True, (150, 160, 180))
+        controls = render_text(renderer.small_font, line, chrome.text_on_panel_dim)
         renderer.screen.blit(controls, (x_offset + renderer.margin, hud_top + 48 + line_index * renderer.small_font.get_linesize()))
-
-def draw_sidebar_panel(
-    renderer: "Pygame_Renderer",
-    scene: Any,
-    x_offset: int,
-    y_offset: int,
-    width: int,
-    height: int,
-) -> None:
-    """Render an optional right-hand sidebar with agent observations and options."""
-    if width <= 0 or height <= 0:
-        return
-
-    panel_rect = pygame.Rect(x_offset, y_offset, width, height)
-    pygame.draw.rect(renderer.screen, (12, 15, 21), panel_rect)
-    pygame.draw.line(renderer.screen, (52, 63, 79), (x_offset, y_offset), (x_offset, y_offset + height), 2)
-    pygame.draw.line(renderer.screen, (52, 63, 79), (x_offset, y_offset), (x_offset + width, y_offset), 2)
-
-    observation_font = getattr(renderer, "sidebar_font", renderer.small_font)
-
-    sidebar = sidebar_state(scene)
-    header_text = sidebar.get("header") or "Agent View"
-    header = renderer.hud_font.render(str(header_text), True, (240, 242, 245))
-    renderer.screen.blit(header, (x_offset + 16, y_offset + 14))
-
-    sidebar_lines = list(sidebar.get("lines", []))
-    selected_action_lines = list(sidebar.get("selected_action", []))
-    action_lines = list(sidebar.get("actions", []))
-    compact_observation = bool(sidebar.get("compact_observation", False))
-    y = y_offset + 48
-    observation_line_height = observation_font.get_linesize() + 3
-    action_line_height = renderer.small_font.get_linesize() + 4
-    max_width = width - 32
-    top_limit = max(y, y_offset + height - 26)
-
-    if not compact_observation:
-        column_x = x_offset + 16
-        column_y = y
-        column_lines = [
-            *action_lines,
-            *([""] if action_lines and selected_action_lines else []),
-            *selected_action_lines,
-            *([""] if (action_lines or selected_action_lines) and sidebar_lines else []),
-            *sidebar_lines,
-        ]
-        for message in column_lines:
-            wrapped = wrap_text_lines(renderer.small_font, str(message), max_width=max_width)
-            for wrapped_line in wrapped:
-                if column_y > top_limit:
-                    return
-                if wrapped_line:
-                    color = (235, 213, 154) if wrapped_line == "Possible Actions:" else (189, 196, 206)
-                    surface = renderer.small_font.render(wrapped_line, True, color)
-                    renderer.screen.blit(surface, (column_x, column_y))
-                column_y += action_line_height
-        return
-
-    column_gap = 18
-    column_width = max(120, (max_width - column_gap) // 2)
-    midpoint = (len(sidebar_lines) + 1) // 2
-    sidebar_columns = [
-        [*action_lines, "", *selected_action_lines, "", *sidebar_lines[:midpoint]],
-        sidebar_lines[midpoint:],
-    ]
-    column_bottoms = [y]
-
-    for column_index, column_lines in enumerate(sidebar_columns):
-        column_x = x_offset + 16 + column_index * (column_width + column_gap)
-        column_y = y
-        for message in column_lines:
-            is_action_line = column_index == 0 and message in action_lines + selected_action_lines
-            font = renderer.small_font if is_action_line else observation_font
-            line_height = action_line_height if is_action_line else observation_line_height
-            wrapped = wrap_text_lines(font, str(message), max_width=column_width)
-            for wrapped_line in wrapped:
-                if column_y > top_limit:
-                    break
-                if wrapped_line:
-                    color = (235, 213, 154) if wrapped_line == "Possible Actions:" else (189, 196, 206)
-                    surface = font.render(wrapped_line, True, color)
-                    renderer.screen.blit(surface, (column_x, column_y))
-                column_y += line_height
-            if column_y > top_limit:
-                break
-        column_y += 4
-        column_bottoms.append(column_y)
-
-    y = max(column_bottoms)
-
 
 def draw_end_overlay(renderer: "Pygame_Renderer", scene: Any, world_x: int, world_width: int, world_height: int) -> None:
     """Draw a centered overlay when the environment reaches a terminal state."""
@@ -900,21 +806,22 @@ def draw_end_overlay(renderer: "Pygame_Renderer", scene: Any, world_x: int, worl
     if not isinstance(overlay_state, dict) or not bool(overlay_state.get("visible", False)):
         return
 
+    chrome = active_chrome(renderer)
     title = str(overlay_state.get("title", "Experiment Completed"))
     subtitle = str(overlay_state.get("subtitle", "The scheduled run has finished."))
-    accent = (149, 161, 178)
+    accent = chrome.text_on_card_soft
 
     overlay = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
-    overlay.fill((8, 10, 16, 170))
+    overlay.fill((*chrome.backdrop, 170))
     renderer.screen.blit(overlay, (world_x, 0))
 
     # Calculate text dimensions with wrapping support
-    title_surface = renderer.font.render(title, True, (245, 247, 250))
+    title_surface = render_text(renderer.font, title, chrome.text_on_card)
 
     # Wrap subtitle text to fit within max width
     max_text_width = min(480, world_width - 80)
     subtitle_lines = wrap_text_lines(renderer.hud_font, subtitle, max_width=max_text_width)
-    subtitle_surfaces = [renderer.hud_font.render(line, True, accent) for line in subtitle_lines]
+    subtitle_surfaces = [render_text(renderer.hud_font, line, accent) for line in subtitle_lines]
     subtitle_height = sum(surf.get_height() for surf in subtitle_surfaces)
     subtitle_width = max((surf.get_width() for surf in subtitle_surfaces), default=0)
 
@@ -929,8 +836,7 @@ def draw_end_overlay(renderer: "Pygame_Renderer", scene: Any, world_x: int, worl
     box_x = (world_width - box_width) // 2
     box_y = (world_height - box_height) // 2
     panel_rect = pygame.Rect(world_x + box_x, box_y, box_width, box_height)
-    pygame.draw.rect(renderer.screen, (18, 22, 30), panel_rect, border_radius=18)
-    pygame.draw.rect(renderer.screen, accent, panel_rect, width=3, border_radius=18)
+    chrome.draw_card(renderer.screen, panel_rect, radius=18)
 
     # Draw title centered
     title_x = world_x + box_x + (box_width - title_surface.get_width()) // 2
@@ -977,20 +883,21 @@ def draw_text_terminal_panel(
     height: int,
 ) -> None:
     """Draw a persistent terminal-style panel to the right of the world view."""
+    chrome = active_chrome(renderer)
     prompt = pygame_runtime(renderer).prompt
     panel_rect = pygame.Rect(x_offset, y_offset, width, height)
     prompt.panel_rect = panel_rect
 
-    pygame.draw.rect(renderer.screen, (10, 13, 18), panel_rect)
-    pygame.draw.line(renderer.screen, (52, 63, 79), (x_offset, y_offset), (x_offset, y_offset + height), 2)
-    pygame.draw.line(renderer.screen, (44, 56, 74), (x_offset, y_offset), (x_offset + width, y_offset), 2)
+    pygame.draw.rect(renderer.screen, chrome.term_bg, panel_rect)
+    pygame.draw.line(renderer.screen, chrome.term_edge, (x_offset, y_offset), (x_offset, y_offset + height), 2)
+    pygame.draw.line(renderer.screen, chrome.term_edge_soft, (x_offset, y_offset), (x_offset + width, y_offset), 2)
 
     pad_x = 18
     pad_y = 14
     title_text = prompt.title if prompt.active else "Terminal"
     subtitle_text = "human input active" if prompt.active else "latest human testing output"
-    title_surface = renderer.hud_font.render(title_text, True, (245, 247, 250))
-    subtitle_surface = renderer.small_font.render(subtitle_text, True, (145, 169, 194))
+    title_surface = render_text(renderer.hud_font, title_text, chrome.term_text)
+    subtitle_surface = render_text(renderer.small_font, subtitle_text, chrome.term_text_dim)
     renderer.screen.blit(title_surface, (panel_rect.x + pad_x, panel_rect.y + pad_y))
     renderer.screen.blit(
         subtitle_surface,
@@ -998,7 +905,7 @@ def draw_text_terminal_panel(
     )
 
     footer_text = "Mouse wheel / PgUp / PgDn scroll | Enter submit | Esc cancel"
-    footer_surface = renderer.small_font.render(footer_text, True, (153, 163, 178))
+    footer_surface = render_text(renderer.small_font, footer_text, chrome.term_text_soft)
     footer_y = panel_rect.bottom - footer_surface.get_height() - 8
     renderer.screen.blit(footer_surface, (panel_rect.x + pad_x, footer_y))
 
@@ -1009,11 +916,11 @@ def draw_text_terminal_panel(
         panel_rect.width - pad_x * 2,
         input_height,
     )
-    pygame.draw.rect(renderer.screen, (13, 16, 22), input_rect, border_radius=10)
-    pygame.draw.rect(renderer.screen, (88, 102, 126), input_rect, width=2, border_radius=10)
+    pygame.draw.rect(renderer.screen, chrome.term_input_bg, input_rect, border_radius=10)
+    pygame.draw.rect(renderer.screen, chrome.term_input_edge, input_rect, width=2, border_radius=10)
 
     prefix_text = prompt.prompt if prompt.active else "> "
-    prefix_surface = renderer.hud_font.render(prefix_text, True, (245, 247, 250))
+    prefix_surface = render_text(renderer.hud_font, prefix_text, chrome.term_text)
     prefix_x = input_rect.x + 12
     prefix_y = input_rect.y + (input_rect.height - prefix_surface.get_height()) // 2
     renderer.screen.blit(prefix_surface, (prefix_x, prefix_y))
@@ -1021,15 +928,15 @@ def draw_text_terminal_panel(
     if prompt.active:
         cursor = "_" if int(time.monotonic() * 2) % 2 == 0 else " "
         input_text = prompt.input_text + cursor
-        input_color = (232, 236, 243)
+        input_color = chrome.term_input_text
     else:
         input_text = "Waiting for the next human prompt..."
-        input_color = (124, 136, 154)
+        input_color = chrome.term_text_faint
     max_input_width = input_rect.width - 24 - prefix_surface.get_width()
     visible_text = input_text
     while visible_text and renderer.hud_font.size(visible_text)[0] > max_input_width:
         visible_text = visible_text[1:]
-    input_surface = renderer.hud_font.render(visible_text, True, input_color)
+    input_surface = render_text(renderer.hud_font, visible_text, input_color)
     renderer.screen.blit(
         input_surface,
         (prefix_x + prefix_surface.get_width(), input_rect.y + (input_rect.height - input_surface.get_height()) // 2),
@@ -1043,8 +950,8 @@ def draw_text_terminal_panel(
         panel_rect.width - pad_x * 2,
         max(20, transcript_bottom - transcript_top),
     )
-    pygame.draw.rect(renderer.screen, (14, 18, 26), transcript_rect, border_radius=10)
-    pygame.draw.rect(renderer.screen, (42, 50, 66), transcript_rect, width=1, border_radius=10)
+    pygame.draw.rect(renderer.screen, chrome.term_inset, transcript_rect, border_radius=10)
+    pygame.draw.rect(renderer.screen, chrome.term_inset_edge, transcript_rect, width=1, border_radius=10)
 
     line_height = renderer.small_font.get_linesize() + 4
     visible_line_count = max(1, (transcript_rect.height - 12) // line_height)
@@ -1056,18 +963,18 @@ def draw_text_terminal_panel(
     line_y = transcript_rect.y + 8
     for line in transcript_lines[start_index:end_index]:
         if line:
-            surface = renderer.small_font.render(line, True, (207, 214, 224))
+            surface = render_text(renderer.small_font, line, chrome.term_transcript_text)
             renderer.screen.blit(surface, (transcript_rect.x + 10, line_y))
         line_y += line_height
 
     if max_offset > 0:
         track_rect = pygame.Rect(transcript_rect.right - 10, transcript_rect.y + 8, 4, transcript_rect.height - 16)
-        pygame.draw.rect(renderer.screen, (36, 44, 58), track_rect, border_radius=4)
+        pygame.draw.rect(renderer.screen, chrome.term_track, track_rect, border_radius=4)
         thumb_height = max(18, int(track_rect.height * (visible_line_count / max(1, len(transcript_lines)))))
         scroll_ratio = start_index / max(1, max_offset)
         thumb_y = track_rect.y + int((track_rect.height - thumb_height) * scroll_ratio)
         thumb_rect = pygame.Rect(track_rect.x, thumb_y, track_rect.width, thumb_height)
-        pygame.draw.rect(renderer.screen, renderer.selection_panel_accent, thumb_rect, border_radius=4)
+        pygame.draw.rect(renderer.screen, chrome.term_thumb, thumb_rect, border_radius=4)
 
 
 def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: int, world_height: int) -> None:
@@ -1087,25 +994,6 @@ def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: 
                 overlay.set_at((x, y), (6, 8, 12, alpha))
         session.vignette_cache[cache_key] = overlay
     renderer.screen.blit(overlay, (world_x, 0))
-
-
-def wrap_text_lines(font: Any, text: str, max_width: int) -> list[str]:
-    """Wrap text greedily into lines that fit within the given width."""
-    words = text.split()
-    if not words:
-        return [""]
-
-    lines: list[str] = []
-    current = words[0]
-    for word in words[1:]:
-        trial = f"{current} {word}"
-        if font.size(trial)[0] <= max_width:
-            current = trial
-        else:
-            lines.append(current)
-            current = word
-    lines.append(current)
-    return lines
 
 
 def fit_wrapped_text_lines(
@@ -1170,6 +1058,7 @@ def draw_speech_bubbles(
     if not speech_bubbles:
         return
 
+    chrome = active_chrome(renderer)
     visible_bubbles: list[tuple[Entity, str, pygame.Rect, tuple[int, int]]] = []
     bubble_groups: dict[tuple[int, int], list[Entity]] = {}
 
@@ -1223,7 +1112,7 @@ def draw_speech_bubbles(
             max_width=text_max_width,
             max_lines=3,
         )
-        text_surfaces = [speech_font.render(line, True, (18, 16, 14)) for line in lines]
+        text_surfaces = [render_text(speech_font, line, chrome.bubble_text) for line in lines]
         text_width = max(surface.get_width() for surface in text_surfaces)
         line_gap = max(1, int(renderer.tile_size * 0.02))
         text_height = sum(surface.get_height() for surface in text_surfaces) + max(0, len(text_surfaces) - 1) * line_gap
@@ -1260,10 +1149,10 @@ def draw_speech_bubbles(
             (tail_base_x + tail_width // 2, bubble_rect.bottom - 2),
             (anchor_x, anchor_y),
         ]
-        pygame.draw.rect(renderer.effect_surface, (250, 245, 233), bubble_rect, border_radius=radius)
-        pygame.draw.rect(renderer.effect_surface, (56, 46, 39), bubble_rect, width=2, border_radius=radius)
-        pygame.draw.polygon(renderer.effect_surface, (250, 245, 233), tail)
-        pygame.draw.polygon(renderer.effect_surface, (56, 46, 39), tail, width=2)
+        pygame.draw.rect(renderer.effect_surface, chrome.bubble_fill, bubble_rect, border_radius=radius)
+        pygame.draw.rect(renderer.effect_surface, chrome.bubble_edge, bubble_rect, width=2, border_radius=radius)
+        pygame.draw.polygon(renderer.effect_surface, chrome.bubble_fill, tail)
+        pygame.draw.polygon(renderer.effect_surface, chrome.bubble_edge, tail, width=2)
 
         text_y = content_top + max(0, (content_height - text_height) // 2)
         for surface in text_surfaces:
@@ -1379,13 +1268,14 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     height = content_height + hud_height
     ensure_screen_size(renderer, width, height)
 
-    renderer.screen.fill((8, 11, 16))
+    chrome = active_chrome(renderer)
+    renderer.screen.fill(chrome.backdrop)
     renderer.floor_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
     renderer.shadow_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
     renderer.entity_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
     renderer.effect_surface = pygame.Surface((world_width, world_height), pygame.SRCALPHA)
     renderer.world_surface = renderer.floor_surface
-    renderer.floor_surface.fill((8, 11, 16))
+    renderer.floor_surface.fill(chrome.backdrop)
     view.last_drawn_entity_rects = {}
 
     renderer.tile_size = active_tile_size

@@ -78,9 +78,6 @@ def configure_renderer(
     renderer.base_tile_size = tile_size
     renderer.display_safe_margin = 72
     apply_renderer_metrics(renderer, tile_size)
-    renderer.focus_outline_color = (245, 214, 102)
-    renderer.selection_outline_color = (128, 203, 255)
-    renderer.selection_panel_accent = (128, 203, 255)
     runtime.session.window_size = None
 
 
@@ -139,14 +136,15 @@ def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
     renderer.viewport_pad_n = max(renderer.margin, int(tile_size * 2.15))
 
     if pygame_runtime(renderer).session.pygame_initialized:
-        renderer.font = pygame.font.SysFont(None, renderer.tile_size)
-        renderer.small_font = pygame.font.SysFont(None, max(16, renderer.tile_size // 2))
-        renderer.sidebar_font = pygame.font.SysFont(None, max(13, int(renderer.tile_size * 0.32)))
-        renderer.hud_font = pygame.font.SysFont(None, max(20, renderer.tile_size // 2 + 6))
+        from .fonts import get_font
+
+        renderer.font = get_font(renderer.tile_size)
+        renderer.small_font = get_font(max(16, renderer.tile_size // 2))
+        renderer.hud_font = get_font(max(20, renderer.tile_size // 2 + 6))
         renderer.speech_fonts = [
-            pygame.font.SysFont(None, max(13, renderer.tile_size // 3)),
-            pygame.font.SysFont(None, max(11, renderer.tile_size // 4)),
-            pygame.font.SysFont(None, 10),
+            get_font(max(13, renderer.tile_size // 3)),
+            get_font(max(11, renderer.tile_size // 4)),
+            get_font(10),
         ]
 
 

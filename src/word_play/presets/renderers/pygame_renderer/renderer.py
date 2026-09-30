@@ -6,6 +6,7 @@ import pygame
 
 from word_play.core import Render_Context, Render_Extractor, Render_Result, Render_Scene, Renderer, Renderer_State
 
+from .chrome import resolve_chrome
 from .draw import render_environment
 from .extractors import default_pygame_extractors
 from .runtime import configure_renderer, handle_entity_click, handle_prompt_panel_event, init_pygame_if_needed
@@ -25,6 +26,7 @@ class Pygame_Renderer(Renderer):
         tile_size: int = 32,
         default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
         extractors: Sequence[Render_Extractor] | None = None,
+        chrome: "str | None" = None,
     ):
         self.render_context: Render_Context = self.create_render_context()
         configure_renderer(
@@ -32,6 +34,8 @@ class Pygame_Renderer(Renderer):
             layout=layout,
             tile_size=tile_size,
         )
+        # UI chrome: explicit argument wins, else rustic.
+        self.chrome_theme = resolve_chrome(chrome)
         self.default_floor_sprite = default_floor_sprite
         self.extractors: list[Render_Extractor] = list(extractors or default_pygame_extractors(layout))
 
