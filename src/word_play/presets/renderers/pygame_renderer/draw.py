@@ -703,11 +703,13 @@ def animated_sprite_name(
     *,
     stagger: int = 0,
     fast: bool = False,
+    tick: int | None = None,
 ) -> str:
     """Swap in the '_2' frame on alternating ticks when a sibling exists.
 
     ``fast`` (used while an entity glides between tiles) more than doubles the
-    frame rate, which reads as a walk cycle.
+    frame rate, which reads as a walk cycle. ``tick`` pins the animation phase
+    explicitly — the static floor bake renders one surface per parity.
     """
     config = renderer.beautify
     if not config.enabled or not config.animate:
@@ -718,8 +720,9 @@ def animated_sprite_name(
     sibling = animation_sibling(renderer, sprite_name)
     if sibling is None:
         return sprite_name
-    period = max(0.05, config.animation_period / (2.5 if fast else 1.0))
-    tick = int(time.monotonic() / period)
+    if tick is None:
+        period = max(0.05, config.animation_period / (2.5 if fast else 1.0))
+        tick = int(time.monotonic() / period)
     return sibling if (tick + stagger) % 2 else sprite_name
 
 
@@ -1086,6 +1089,7 @@ def draw_background_tile(
     py: int,
     *,
     wall_positions: set[tuple[int, int]],
+    tick: int | None = None,
 ) -> None:
     """Draw one background tile and require explicit sprite-backed assets."""
     kind = item.get("kind", "floor")
@@ -1101,7 +1105,7 @@ def draw_background_tile(
     # positional variety first (grass patches etc.), then animation frame swap
     tile_x, tile_y = int(item.get("x", 0)), int(item.get("y", 0))
     sprite_name = ground_variant_name(renderer, sprite_name, tile_x, tile_y)
-    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=tile_x + tile_y)
+    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=tile_x + tile_y, tick=tick)
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
         # Draw placeholder square
@@ -1791,6 +1795,98 @@ def auto_tiled_wall_sprites(
     return resolved_sprites
 
 
+def _floor_animation_parity(renderer: "Pygame_Renderer") -> int:
+    """The global 0/1 animation phase used to pick a baked floor surface."""
+    config = renderer.beautify
+    if not config.enabled or not config.animate:
+        return 0
+    period = max(0.05, config.animation_period)
+    return int(time.monotonic() / period) % 2
+
+
+def _background_fingerprint(scene: Any, background: list[dict[str, Any]]) -> Any:
+    """A cheap identity for the background tile layer, for bake invalidation.
+
+    Environments can publish ``world.background_version`` (any hashable) and
+    bump it when they mutate terrain; otherwise the tile contents are hashed —
+    still ~10x cheaper than drawing them, and correct for environments that
+    rebuild the list every frame with unchanged contents.
+    """
+    version = scene_metadata(scene, "world.background_version")
+    if version is not None:
+        return ("v", version)
+    return (
+        "h",
+        hash(tuple(
+            (int(item["x"]), int(item["y"]), item.get("sprite"), item.get("kind"), item.get("wall_set"))
+            for item in background
+        )),
+    )
+
+
+def _baked_floor_layer(
+    renderer: "Pygame_Renderer",
+    scene: Any,
+    theme: Any,
+    background: list[dict[str, Any]],
+    *,
+    min_x: int,
+    max_y: int,
+    world_size: tuple[int, int],
+    parity: int,
+) -> Any:
+    """The full background layer (tiles + walls + fringes) as a cached surface.
+
+    Full-map mode redraws ~1000 static tiles per frame; baking them into one
+    surface per animation parity turns that into a single blit. Rebuilt when
+    the tiles, tile size, camera window, theme, or world size change.
+    """
+    session = pygame_runtime(renderer).session
+    config = renderer.beautify
+    bake_key = (
+        _background_fingerprint(scene, background),
+        renderer.tile_size,
+        min_x,
+        max_y,
+        world_size,
+        id(theme),
+        (config.enabled, config.animate),
+    )
+    if session.floor_bake_key != bake_key:
+        session.floor_bake_key = bake_key
+        session.floor_bake = {}
+    surface = session.floor_bake.get(parity)
+    if surface is not None:
+        return surface
+
+    surface = pygame.Surface(world_size, pygame.SRCALPHA)
+    wall_positions = collect_wall_positions(background)
+    previous_floor = renderer.floor_surface
+    previous_world = renderer.world_surface
+    renderer.floor_surface = surface
+    renderer.world_surface = surface
+    try:
+        for item in background:
+            px, py = screen_rect_for_tile(renderer, int(item["x"]), int(item["y"]), min_x, max_y)
+            draw_background_tile(renderer, item, px, py, wall_positions=wall_positions, tick=parity)
+        if theme is not None:
+            draw_ground_fringes(
+                renderer,
+                theme,
+                background,
+                background,
+                min_x=min_x,
+                max_y=max_y,
+                offset_x=0,
+                offset_y=0,
+            )
+    finally:
+        renderer.floor_surface = previous_floor
+        renderer.world_surface = previous_world
+    session.floor_bake[parity] = surface
+    return surface
+
+
 
 def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: Any | None = None) -> None:
     """Render a full frame including background, entities, effects, and HUD."""
@@ -1931,31 +2027,48 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
     renderer.tile_size = active_tile_size
     try:
-        visible_background = [
-            item for item in background
-            if is_within_visible_bounds(int(item["x"]), int(item["y"]), min_x, cull_max_x, min_y, cull_max_y)
-        ]
-        wall_positions = collect_wall_positions(visible_background)
-
-        for item in visible_background:
-            x = int(item["x"])
-            y = int(item["y"])
-            px, py = screen_rect_for_tile(renderer, x, y, min_x, max_y)
-            px += view_offset_x
-            py += view_offset_y
-            draw_background_tile(renderer, item, px, py, wall_positions=wall_positions)
-
-        if theme is not None:
-            draw_ground_fringes(
+        if view.camera_focus_entity is None:
+            # Full-map mode: the background is static geometry — blit the baked
+            # layer instead of re-drawing every tile (and re-autotiling every
+            # wall) each frame. Focus mode keeps the per-tile path: its window
+            # is small and pans sub-tile every frame.
+            baked = _baked_floor_layer(
                 renderer,
+                scene,
                 theme,
                 background,
-                visible_background,
                 min_x=min_x,
                 max_y=max_y,
-                offset_x=view_offset_x,
-                offset_y=view_offset_y,
+                world_size=(world_width, world_height),
+                parity=_floor_animation_parity(renderer),
             )
+            renderer.floor_surface.blit(baked, (view_offset_x, view_offset_y))
+        else:
+            visible_background = [
+                item for item in background
+                if is_within_visible_bounds(int(item["x"]), int(item["y"]), min_x, cull_max_x, min_y, cull_max_y)
+            ]
+            wall_positions = collect_wall_positions(visible_background)
+
+            for item in visible_background:
+                x = int(item["x"])
+                y = int(item["y"])
+                px, py = screen_rect_for_tile(renderer, x, y, min_x, max_y)
+                px += view_offset_x
+                py += view_offset_y
+                draw_background_tile(renderer, item, px, py, wall_positions=wall_positions)
+
+            if theme is not None:
+                draw_ground_fringes(
+                    renderer,
+                    theme,
+                    background,
+                    visible_background,
+                    min_x=min_x,
+                    max_y=max_y,
+                    offset_x=view_offset_x,
+                    offset_y=view_offset_y,
+                )
 
         wall_sprite_overrides = auto_tiled_wall_sprites(renderer, env, renderables)
 
