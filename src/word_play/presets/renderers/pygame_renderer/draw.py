@@ -20,6 +20,7 @@ from .assets import (
 )
 from ..dynamic_behaviours import resolve_dynamic_behaviour
 from ..themes import apply_theme_defaults, lookup_sprite, placeholder, resolve_sprite
+from .beautify import resolve_ambient
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
@@ -1332,6 +1333,108 @@ def draw_text_terminal_panel(
         pygame.draw.rect(renderer.screen, chrome.term_thumb, thumb_rect, border_radius=4)
 
 
+def _ambient_wash(
+    renderer: "Pygame_Renderer",
+    width: int,
+    height: int,
+    top: tuple[int, int, int, int],
+    bottom: tuple[int, int, int, int] | None,
+) -> Any:
+    """A flat or vertical-gradient ambient wash, cached per size and colors.
+
+    Colors are quantized to 4/255 steps so a cycling ``time_of_day`` (which
+    lerps the wash every frame) revisits a bounded key set instead of building
+    and leaking a full-screen gradient per frame.
+    """
+    top = tuple(int(c) // 4 * 4 for c in top)
+    if bottom is not None:
+        bottom = tuple(int(c) // 4 * 4 for c in bottom)
+    cache = pygame_runtime(renderer).session.overlay_cache
+    return cache.get_or_build(("__wash__", width, height, top, bottom), lambda: _build_wash(width, height, top, bottom))
+
+
+def _build_wash(width: int, height: int, top: tuple, bottom: tuple | None) -> pygame.Surface:
+    wash = pygame.Surface((width, height), pygame.SRCALPHA)
+    if bottom is None:
+        wash.fill(top)
+    else:
+        for y in range(height):
+            f = y / max(1, height - 1)
+            row = tuple(int(a + (b - a) * f) for a, b in zip(top, bottom))
+            pygame.draw.line(wash, row, (0, y), (width, y))
+    return wash
+
+
+def _glow_surface(
+    renderer: "Pygame_Renderer",
+    color: tuple[int, int, int],
+    radius: int,
+    strength: float = 1.0,
+) -> Any:
+    """A cached radial light disc for additive compositing (lamp glow).
+
+    Strength is quantized to 0.1 steps: flicker varies it sinusoidally every
+    frame, and finer buckets minted dozens of large disc surfaces per lamp.
+    """
+    strength = round(strength, 1)
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__glow__", color, radius, strength), lambda: _build_glow(color, radius, strength))
+
+
+def _build_glow(color: tuple[int, int, int], radius: int, strength: float) -> pygame.Surface:
+    surface = pygame.Surface((radius * 2, radius * 2))
+    surface.fill((0, 0, 0))
+    steps = max(6, radius // 3)
+    for i in range(steps, 0, -1):
+        falloff = (1.0 - i / steps) ** 1.5      # softer skirt than quadratic
+        ring_color = tuple(min(255, int(c * 0.7 * strength * falloff)) for c in color)
+        pygame.draw.circle(surface, ring_color, (radius, radius), int(radius * i / steps))
+    return surface
+
+
+def _render_lightmap(
+    renderer: "Pygame_Renderer",
+    width: int,
+    height: int,
+    mult_color: tuple[int, int, int],
+    glow_draws: list[tuple[int, int, tuple[int, int, int], float, float]],
+    glow_scale: float,
+    *,
+    tile_size: int | None = None,
+) -> Any:
+    """The frame's light field at quarter resolution: ambient base + lamp discs.
+
+    Multiplied over the finished frame, white areas leave the scene untouched
+    and dark areas press it down — so a lamp disc added here restores the
+    sprite's own colors instead of tinting the darkness. The upscale doubles as
+    a free soft-falloff blur.
+    """
+    scale = 4
+    low_w = max(1, width // scale)
+    low_h = max(1, height // scale)
+    disc_tile = renderer.tile_size if tile_size is None else tile_size
+    session = pygame_runtime(renderer).session
+    lightmap = session.lightmap_low
+    if lightmap is None or lightmap.get_size() != (low_w, low_h):
+        lightmap = pygame.Surface((low_w, low_h))
+        session.lightmap_low = lightmap
+    lightmap.fill(mult_color)
+    for cx, cy, glow_color, radius_tiles, strength in glow_draws:
+        radius = max(3, int(disc_tile * radius_tiles) // scale)
+        disc = _glow_surface(renderer, glow_color, radius, min(2.0, strength * glow_scale * 1.6))
+        lightmap.blit(
+            disc,
+            (cx // scale - radius, cy // scale - radius),
+            special_flags=pygame.BLEND_RGB_ADD,
+        )
+    full = session.lightmap_full
+    if full is None or full.get_size() != (width, height):
+        full = pygame.Surface((width, height))
+        session.lightmap_full = full
+    pygame.transform.smoothscale(lightmap, (width, height), full)
+    return full
+
+
 def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: int, world_height: int) -> None:
     """Apply a subtle darkening toward the edges of the world view."""
     cache_key = (world_width, world_height)
@@ -1582,6 +1685,11 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             del view.entity_glide[stale]
             view.entities_in_motion.discard(stale)
             view.entity_facing.pop(stale, None)
+    if renderer.beautify.enabled:
+        ambient_wash, ambient_wash_bottom, ambient_mult, light_level = resolve_ambient(renderer.beautify)
+    else:
+        ambient_wash = ambient_wash_bottom = ambient_mult = None
+        light_level = 0.0
 
     min_world_x, max_world_x, min_world_y, max_world_y = world_bounds(renderer, env, background, renderables)
     full_grid_width = max(1, max_world_x - min_world_x + 1)
@@ -1742,6 +1850,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 shared_tile_groups.setdefault(world_position, []).append(entity)
 
         positions: dict[Entity, tuple[int, int]] = {}
+        glow_draws: list[tuple[int, int, tuple[int, int, int], float, float]] = []
         for entity, renderable, world_position, position in visible_entity_draws:
             px, py = position
             draw_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
@@ -1755,6 +1864,21 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                     count=len(group),
                 )
             positions[entity] = (draw_rect.x, draw_rect.y)
+            if renderable.glow is not None:
+                strength = renderable.glow_strength
+                flicker = renderable.flicker
+                if flicker:
+                    # flame waver: a per-entity phase keeps neighboring fires out
+                    # of sync so a row of torches doesn't pulse in lockstep
+                    phase = (id(entity) % 1000) / 1000.0 * math.tau
+                    strength *= 1.0 + flicker * math.sin(time.monotonic() * 7.0 + phase)
+                glow_draws.append((
+                    draw_rect.x + draw_rect.width // 2,
+                    draw_rect.y + draw_rect.width // 2,
+                    renderable.glow,
+                    renderable.glow_radius,
+                    strength,
+                ))
             draw_entity(
                 renderer,
                 entity,
@@ -1781,6 +1905,48 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     renderer.screen.blit(renderer.shadow_surface, (world_x, 0))
     renderer.screen.blit(renderer.entity_surface, (world_x, 0))
     renderer.screen.blit(renderer.effect_surface, (world_x, 0))
+    if ambient_wash is not None or ambient_mult is not None:
+        # lights ramp up exactly as the ambient ramps down (Stardew/Graveyard Keeper)
+        glow_scale = 1.0 if light_level <= 0.0 else 0.35 + 0.65 * light_level
+        if ambient_mult is not None:
+            if glow_draws:
+                # One low-res lightmap seeded with the ambient darkness, lamp discs
+                # added INTO it, multiplied over the frame (Godot CanvasModulate /
+                # Stardew drawLightmap pattern): lamps carve their true colors back
+                # out of the night instead of hazing over the wash.
+                lightmap = _render_lightmap(
+                    renderer, world_width, world_height, ambient_mult, glow_draws, glow_scale,
+                    tile_size=active_tile_size,
+                )
+                renderer.screen.blit(lightmap, (world_x, 0), special_flags=pygame.BLEND_RGB_MULT)
+            else:
+                # No lamps: multiplying by a constant lightmap is just a flat
+                # multiply — skip the per-frame surface fill + smoothscale.
+                renderer.screen.fill(
+                    ambient_mult,
+                    pygame.Rect(world_x, 0, world_width, world_height),
+                    special_flags=pygame.BLEND_RGB_MULT,
+                )
+        if ambient_wash is not None:
+            wash = _ambient_wash(renderer, world_width, world_height, ambient_wash, ambient_wash_bottom)
+            renderer.screen.blit(wash, (world_x, 0))
+        # the additive passes below draw straight to the screen — in focus mode
+        # they must respect the camera box like the world surfaces did
+        if camera_clip is not None:
+            renderer.screen.set_clip(camera_clip.move(world_x, 0))
+        # additive pass: at day (no multiply) this is the whole glow; after dark
+        # it is only a soft bloom over the pools the lightmap already carved
+        bloom_scale = glow_scale if ambient_mult is None else glow_scale * 0.35
+        for cx, cy, glow_color, radius_tiles, strength in glow_draws:
+            radius = max(6, int(active_tile_size * radius_tiles))
+            glow = _glow_surface(renderer, glow_color, radius, strength * bloom_scale)
+            renderer.screen.blit(
+                glow,
+                (world_x + cx - radius, cy - radius),
+                special_flags=pygame.BLEND_RGB_ADD,
+            )
+        if camera_clip is not None:
+            renderer.screen.set_clip(None)
     draw_world_vignette(renderer, world_x, world_width, world_height)
 
     draw_text_terminal_panel(

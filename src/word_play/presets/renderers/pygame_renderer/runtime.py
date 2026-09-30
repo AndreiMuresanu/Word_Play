@@ -85,6 +85,9 @@ class Pygame_Session_State:
     wall_override_result: dict[Any, str] = field(default_factory=dict)
     # fitted_tile_size memo keyed by (grid, sidebar, hud, desktop, base tile).
     fit_cache: dict[tuple, int] = field(default_factory=dict)
+    # Persistent lightmap buffers (quarter-res field + full-res destination).
+    lightmap_low: Any = None
+    lightmap_full: Any = None
 
 
 @dataclass(slots=True)
