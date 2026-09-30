@@ -217,31 +217,51 @@ def update_camera_state(
             effects.camera_shake_strength = (
                 0.0 if effects.camera_shake_until <= time.monotonic() else effects.camera_shake_strength
             )
-            return (
-                *centered_camera_axis(focus_x, radius, min_world_x, max_world_x),
-                *centered_camera_axis(focus_y, radius, min_world_y, max_world_y),
-            )
+            # Float camera: ease the center toward the focus entity so the view
+            # pans in sub-tile pixels instead of lurching a whole tile whenever
+            # the entity crosses a tile boundary (Keren, "Scroll Back").
+            now = time.monotonic()
+            dt = min(0.1, max(0.0, now - view.camera_pan_time)) if view.camera_pan_time else 0.0
+            view.camera_pan_time = now
+            target = (float(focus_x), float(focus_y))
+            center = view.camera_center
+            if center is None or abs(center[0] - target[0]) + abs(center[1] - target[1]) > radius * 2 + 4:
+                center = target                          # first frame / teleport: snap
+            else:
+                ease = 1.0 - math.exp(-dt * 4.5)
+                center = (
+                    center[0] + (target[0] - center[0]) * ease,
+                    center[1] + (target[1] - center[1]) * ease,
+                )
+            view.camera_center = center
+            min_x, max_x, frac_x = _float_camera_axis(center[0], radius, min_world_x, max_world_x)
+            min_y, max_y, frac_y = _float_camera_axis(center[1], radius, min_world_y, max_world_y)
+            view.camera_frac = (frac_x, frac_y)
+            return min_x, max_x, min_y, max_y
 
     effects.camera_shake_strength = 0.0 if effects.camera_shake_until <= time.monotonic() else effects.camera_shake_strength
+    view.camera_center = None
+    view.camera_pan_time = 0.0
+    view.camera_frac = (0.0, 0.0)
     return min_world_x, max_world_x, min_world_y, max_world_y
 
 
-def centered_camera_axis(center: int, radius: int, min_world: int, max_world: int) -> tuple[int, int]:
-    """Clamp a focused camera axis to the world without shrinking near edges."""
+def _float_camera_axis(center: float, radius: int, min_world: int, max_world: int) -> tuple[int, int, float]:
+    """One axis of the float camera: integer tile window + fractional origin.
+
+    The window keeps its nominal size (layout stays stable); the fractional
+    part becomes a sub-tile pixel pan applied at composite time.
+    """
     size = radius * 2 + 1
     world_size = max_world - min_world + 1
     if world_size <= size:
-        return min_world, max_world
+        return min_world, max_world, 0.0
 
-    min_bound = center - radius
-    max_bound = min_bound + size - 1
-    if min_bound < min_world:
-        min_bound = min_world
-        max_bound = min_bound + size - 1
-    if max_bound > max_world:
-        max_bound = max_world
-        min_bound = max_bound - size + 1
-    return min_bound, max_bound
+    center = max(min_world + radius, min(max_world - radius, center))
+    origin = center - radius
+    min_bound = math.floor(origin)
+    frac = origin - min_bound
+    return int(min_bound), int(min_bound) + size - 1, frac
 
 
 def is_within_visible_bounds(x: int, y: int, min_x: int, max_x: int, min_y: int, max_y: int) -> bool:
@@ -1456,6 +1476,23 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     view_offset_x = max(0, (tile_area_width - view_grid_width * active_tile_size) // 2)
     view_offset_y = max(0, (tile_area_height - view_grid_height * active_tile_size) // 2)
 
+    # Float camera: the fractional window origin becomes a sub-tile pixel pan.
+    # Layout stays on the integer window; culling widens by one tile on the max
+    # side to fill the strip the pan reveals; a clip keeps it inside the view box.
+    frac_x, frac_y = view.camera_frac
+    camera_clip: pygame.Rect | None = None
+    if view.camera_focus_entity is not None:
+        camera_clip = pygame.Rect(
+            renderer.viewport_pad_w + view_offset_x,
+            renderer.viewport_pad_n + view_offset_y,
+            view_grid_width * active_tile_size,
+            view_grid_height * active_tile_size,
+        )
+    cull_max_x = max_x + (1 if frac_x > 1e-6 else 0)
+    cull_max_y = max_y + (1 if frac_y > 1e-6 else 0)
+    view_offset_x -= int(round(frac_x * active_tile_size))
+    view_offset_y += int(round(frac_y * active_tile_size))
+
     sidebar_width = 0
     if needs_sidebar:
         sidebar_width = max(
@@ -1489,17 +1526,23 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     renderer.entity_surface = session.layer_surfaces["entity"]
     renderer.effect_surface = session.layer_surfaces["effect"]
     renderer.world_surface = renderer.floor_surface
+    # clear any clip left from a previous focus-mode frame BEFORE filling
+    for surface in (renderer.floor_surface, renderer.shadow_surface, renderer.entity_surface, renderer.effect_surface):
+        surface.set_clip(None)
     renderer.floor_surface.fill(chrome.backdrop)
     renderer.shadow_surface.fill((0, 0, 0, 0))
     renderer.entity_surface.fill((0, 0, 0, 0))
     renderer.effect_surface.fill((0, 0, 0, 0))
     view.last_drawn_entity_rects = {}
+    if camera_clip is not None:
+        for surface in (renderer.floor_surface, renderer.shadow_surface, renderer.entity_surface, renderer.effect_surface):
+            surface.set_clip(camera_clip)
 
     renderer.tile_size = active_tile_size
     try:
         visible_background = [
             item for item in background
-            if is_within_visible_bounds(int(item["x"]), int(item["y"]), min_x, max_x, min_y, max_y)
+            if is_within_visible_bounds(int(item["x"]), int(item["y"]), min_x, cull_max_x, min_y, cull_max_y)
         ]
         wall_positions = collect_wall_positions(visible_background)
 
@@ -1520,7 +1563,11 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             if world_position is None:
                 continue
             x, y = world_position
-            if not is_within_visible_bounds(x, y, min_x, max_x, min_y, max_y):
+            # the focused entity is never culled: its glide may trail the eased
+            # camera window by more than the margin right after a multi-tile hop
+            if entity is not view.camera_focus_entity and not is_within_visible_bounds(
+                x, y, min_x, cull_max_x, min_y, cull_max_y
+            ):
                 continue
             position = interpolated_entity_screen_position(
                 renderer,
@@ -1564,6 +1611,10 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 sprite_name_override=wall_sprite_overrides.get(entity),
             )
 
+        # UI overlays (speech bubbles, inspector card, hit effects)
+        # intentionally rise into the viewport padding; the cull-margin clip
+        # must not cut them. World-tied content above keeps the clip.
+        renderer.effect_surface.set_clip(None)
         draw_hit_effects(renderer, scene, positions)
         draw_speech_bubbles(renderer, scene, positions)
         draw_selected_entity_card(renderer, env, positions)

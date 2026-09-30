@@ -102,6 +102,13 @@ class Pygame_View_State:
     # EMA of the sim-step cadence so glides span the whole interval
     glide_interval_ema: float = 1.0
     glide_last_change: float = 0.0
+    # Float camera center (tile coords) for focus mode — eases toward the focus
+    # entity so the view pans smoothly instead of lurching a whole tile.
+    camera_center: tuple[float, float] | None = None
+    camera_pan_time: float = 0.0
+    # Fractional part of the camera window origin this frame (0..1 tiles); the
+    # composite pass converts it into a sub-tile pixel shift.
+    camera_frac: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass(slots=True)
