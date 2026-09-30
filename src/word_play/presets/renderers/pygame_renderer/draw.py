@@ -1744,6 +1744,7 @@ def draw_speech_bubbles(
         if entity not in bubble_groups.setdefault(group_key, []):
             bubble_groups[group_key].append(entity)
 
+    placed_bubble_rects: list[pygame.Rect] = []
     for entity, text, entity_rect, group_key in visible_bubbles:
         renderable = renderable_component(entity)
         scale = getattr(renderable, "speech_bubble_scale", 1.0) if renderable is not None else 1.0
@@ -1795,12 +1796,25 @@ def draw_speech_bubbles(
         vertical_gap = max(6, renderer.tile_size // 10)
         vertical_offset = int((rows - 1 - row) * (bubble_height + tail_height + vertical_gap))
         bubble_y = max(6, anchor_y - bubble_height - tail_height - vertical_offset)
+
+        bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_width, bubble_height)
+        # de-overlap: if this bubble collides with one already placed (a nearby
+        # speaker's), lift it above so both stay readable instead of stacking
+        for _ in range(len(placed_bubble_rects)):
+            hit = next((r for r in placed_bubble_rects
+                        if bubble_rect.colliderect(r.inflate(4, 4))), None)
+            if hit is None:
+                break
+            bubble_rect.bottom = hit.top - max(2, tail_height // 2)
+            if bubble_rect.top < 6:
+                bubble_rect.top = 6
+                break
+        placed_bubble_rects.append(bubble_rect)
+        bubble_x, bubble_y = bubble_rect.x, bubble_rect.y
         content_left = bubble_x + pad_left
         content_top = bubble_y + pad_top
         content_width = bubble_width - pad_left - pad_right
         content_height = bubble_height - pad_top - pad_bottom
-
-        bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_width, bubble_height)
         tail_base_x = max(
             bubble_rect.left + tail_width // 2,
             min(anchor_x, bubble_rect.right - tail_width // 2),
