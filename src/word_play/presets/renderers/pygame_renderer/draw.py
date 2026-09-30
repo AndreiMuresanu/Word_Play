@@ -1117,6 +1117,70 @@ def draw_background_tile(
     # Draw the image
     renderer.floor_surface.blit(image, (px, py))
 
+def draw_overlay_tiles(
+    renderer: "Pygame_Renderer",
+    scene: Any,
+    *,
+    min_x: int,
+    max_x: int,
+    min_y: int,
+    max_y: int,
+    offset_x: int,
+    offset_y: int,
+) -> None:
+    """Draw the ``world.overlay_tiles`` frame channel over the ground layer.
+
+    A general per-tile wash for territory ownership, pollution/resource
+    density, lane markers, watering state, etc.::
+
+        env.render_state.frame["world.overlay_tiles"] = [
+            {"x": 3, "y": 4, "color": [220, 60, 60, 70]},       # translucent wash
+            {"x": 5, "y": 4, "sprite": "lane_marker", "alpha": 200},
+        ]
+
+    Drawn above ground tiles and fringes, below shadows and entities.
+    """
+    overlays = scene_metadata(scene, "world.overlay_tiles") or []
+    if not overlays:
+        return
+    session = pygame_runtime(renderer).session
+    for item in overlays:
+        if not isinstance(item, dict):
+            continue
+        x, y = int(item.get("x", 0)), int(item.get("y", 0))
+        if not is_within_visible_bounds(x, y, min_x, max_x, min_y, max_y):
+            continue
+        px, py = screen_rect_for_tile(renderer, x, y, min_x, max_y)
+        px += offset_x
+        py += offset_y
+        sprite = item.get("sprite")
+        if sprite:
+            alpha = item.get("alpha")
+            key = ("__overlay_sprite__", str(sprite), renderer.tile_size, None if alpha is None else int(alpha))
+            image = session.scaled_image_cache.get(key)
+            if image is None:
+                base = get_scaled_image(renderer, str(sprite), renderer.tile_size, renderer.tile_size)
+                if base is None:
+                    continue
+                image = base
+                if alpha is not None:
+                    image = base.copy()
+                    image.set_alpha(int(alpha))
+                session.scaled_image_cache[key] = image
+            renderer.floor_surface.blit(image, (px, py))
+            continue
+        color = item.get("color")
+        if not color:
+            continue
+        rgba = tuple(int(c) for c in color)
+        if len(rgba) == 3:
+            rgba = (*rgba, 90)
+        tile = session.scaled_image_cache.get_or_build(
+            ("__overlay__", renderer.tile_size, rgba), lambda: _filled_surface(renderer.tile_size, renderer.tile_size, rgba)
+        )
+        renderer.floor_surface.blit(tile, (px, py))
+
+
 def draw_hud_panel(renderer: "Pygame_Renderer", scene: Any, x_offset: int, width: int, height: int) -> None:
     """Render the bottom HUD panel with step counter, mode, and controls."""
     if not bool(scene_metadata(scene, "ui.hud_visible", True)):
@@ -2069,6 +2133,18 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                     offset_x=view_offset_x,
                     offset_y=view_offset_y,
                 )
+
+        # dynamic per-tile washes (territory, density, lanes) — never baked
+        draw_overlay_tiles(
+            renderer,
+            scene,
+            min_x=min_x,
+            max_x=cull_max_x,
+            min_y=min_y,
+            max_y=cull_max_y,
+            offset_x=view_offset_x,
+            offset_y=view_offset_y,
+        )
 
         wall_sprite_overrides = auto_tiled_wall_sprites(renderer, env, renderables)
 
