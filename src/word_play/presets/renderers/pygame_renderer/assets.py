@@ -110,17 +110,18 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
     return scaled
 
 
-def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str) -> str | None:
+def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str, *, exclude: tuple[str, ...] = ()) -> str | None:
     """Return ``foo<suffix>.png`` if it exists next to ``foo.png`` (cached).
 
     The file-name conventions that need no authoring: ``_2`` (second animation
-    frame), ``_back`` (rear view), ``_<pose>`` (dynamic-behaviour pose).
+    frame), ``_back`` (rear view), ``_<pose>`` (dynamic-behaviour pose),
+    ``_glow`` (emissive overlay), ``_b``/``_c`` (ground variants).
     """
     session = pygame_runtime(renderer).session
     key = (suffix, sprite_name)
     if key not in session.anim_sibling_cache:
         sibling = None
-        if sprite_name.endswith(".png") and not sprite_name.endswith(("_2.png", f"{suffix}.png")):
+        if sprite_name.endswith(".png") and not sprite_name.endswith(("_2.png", f"{suffix}.png", *exclude)):
             candidate = f"{sprite_name[:-4]}{suffix}.png"
             if any(path.is_file() for path in candidate_asset_paths(candidate)):
                 sibling = candidate
@@ -138,6 +139,38 @@ def back_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
 
 def pose_sibling(renderer: "Pygame_Renderer", sprite_name: str, pose: str) -> str | None:
     return _sibling(renderer, sprite_name, f"_{pose}")
+
+
+def glow_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_glow", exclude=("_back.png",))
+
+
+def get_emissive_overlay(
+    renderer: "Pygame_Renderer",
+    sprite_name: str,
+    width: int,
+    height: int,
+    light_level: float,
+) -> Any | None:
+    """A '_glow' overlay scaled and pre-dimmed to the frame's darkness bucket."""
+    sibling = glow_sibling(renderer, sprite_name)
+    if sibling is None or light_level <= 0.05:
+        return None
+    bucket = min(10, max(1, int(round(light_level * 10))))
+
+    def build() -> Any | None:
+        scaled = get_scaled_image(renderer, sibling, width, height)
+        if scaled is None:
+            return None
+        overlay = scaled.copy()
+        level = int(255 * bucket / 10)
+        overlay.fill((level, level, level, 255), special_flags=pygame.BLEND_RGB_MULT)
+        # premultiply so fully transparent pixels contribute NOTHING to the screen
+        # blend (stray RGB in alpha-0 pixels would otherwise show as a grey box)
+        return overlay.premul_alpha()
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__emissive__", sibling, width, height, bucket), build)
 
 
 def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:

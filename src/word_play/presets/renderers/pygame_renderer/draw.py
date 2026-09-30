@@ -12,6 +12,7 @@ from word_play.presets.systems.inventory import Inventory
 from .assets import (
     animation_sibling,
     back_sibling,
+    get_emissive_overlay,
     get_or_load_image,
     get_scaled_image,
     get_soft_shadow,
@@ -1851,6 +1852,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
         positions: dict[Entity, tuple[int, int]] = {}
         glow_draws: list[tuple[int, int, tuple[int, int, int], float, float]] = []
+        emissive_draws: list[tuple[Any, tuple[int, int]]] = []
         for entity, renderable, world_position, position in visible_entity_draws:
             px, py = position
             draw_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
@@ -1879,6 +1881,12 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                     renderable.glow_radius,
                     strength,
                 ))
+            if light_level > 0.05 and renderable.wall_set is None:
+                sprite = resolve_sprite(renderer.theme, renderable.sprite_path)
+                emissive_h = sprite_draw_height(renderer, get_or_load_image(renderer, sprite), draw_rect.width)
+                overlay = get_emissive_overlay(renderer, sprite, draw_rect.width, emissive_h, light_level)
+                if overlay is not None:
+                    emissive_draws.append((overlay, (draw_rect.x, draw_rect.y - (emissive_h - draw_rect.width))))
             draw_entity(
                 renderer,
                 entity,
@@ -1905,7 +1913,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     renderer.screen.blit(renderer.shadow_surface, (world_x, 0))
     renderer.screen.blit(renderer.entity_surface, (world_x, 0))
     renderer.screen.blit(renderer.effect_surface, (world_x, 0))
-    if ambient_wash is not None or ambient_mult is not None:
+    if ambient_wash is not None or ambient_mult is not None or emissive_draws:
         # lights ramp up exactly as the ambient ramps down (Stardew/Graveyard Keeper)
         glow_scale = 1.0 if light_level <= 0.0 else 0.35 + 0.65 * light_level
         if ambient_mult is not None:
@@ -1934,6 +1942,12 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
         # they must respect the camera box like the world surfaces did
         if camera_clip is not None:
             renderer.screen.set_clip(camera_clip.move(world_x, 0))
+        # `_glow` emissive overlays composite after the multiply so lit windows
+        # and lamp heads stay crisp inside the darkened scene. MAX (not ADD)
+        # keeps the overlay's own warm hue as a per-channel floor instead of
+        # summing past clamp into flat white.
+        for overlay, (ex, ey) in emissive_draws:
+            renderer.screen.blit(overlay, (world_x + ex, ey), special_flags=pygame.BLEND_RGB_MAX)
         # additive pass: at day (no multiply) this is the whole glow; after dark
         # it is only a soft bloom over the pools the lightmap already carved
         bloom_scale = glow_scale if ambient_mult is None else glow_scale * 0.35
