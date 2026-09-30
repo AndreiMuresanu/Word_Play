@@ -26,6 +26,7 @@ from ..themes import apply_theme_defaults, lookup_sprite, placeholder, resolve_s
 from .beautify import resolve_ambient
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
+from .metrics_rendering import draw_metrics_overlay
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
 from .renderable import Renderable
 from .runtime import apply_renderer_metrics, ensure_screen_size, fitted_tile_size, focused_radius, pygame_runtime
@@ -2317,6 +2318,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             )
             draw_ambient_particles(renderer, inner)
     draw_world_vignette(renderer, world_x, world_width, world_height)
+    draw_metrics_overlay(renderer, scene)
 
     draw_text_terminal_panel(
         renderer,
