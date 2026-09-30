@@ -339,5 +339,27 @@ class RenderingRefactorTests(unittest.TestCase):
         self.assertEqual(frame["render_state_events"], payload["frames"][0]["render_state_events"])
 
 
+class RenderBehaviourTests(unittest.TestCase):
+    def test_static_behaviour_fills_glow_smoke_floor(self):
+        from word_play.presets.renderers import Renderable, apply_behaviour
+
+        r = Renderable(sprite_path="x.png", behaviour="stove")
+        apply_behaviour(r)
+        self.assertIsNotNone(r.glow)          # stove glows
+        self.assertTrue(r.smoke)              # ...and steams
+        self.assertFalse(r.floor)
+
+        floor = Renderable(sprite_path="x.png", behaviour="floor")
+        apply_behaviour(floor)
+        self.assertTrue(floor.floor)
+
+    def test_explicit_value_wins_over_behaviour(self):
+        from word_play.presets.renderers import Renderable, apply_behaviour
+
+        r = Renderable(sprite_path="x.png", behaviour="lamp", glow=(0, 255, 0))
+        apply_behaviour(r)
+        self.assertEqual(r.glow, (0, 255, 0))
+
+
 if __name__ == "__main__":
     unittest.main()

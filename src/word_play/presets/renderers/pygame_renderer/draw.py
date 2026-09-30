@@ -15,6 +15,7 @@ from .assets import (
     get_soft_shadow,
     resolve_wall_sprite,
 )
+from ..behaviours import apply_behaviour
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
@@ -587,10 +588,16 @@ def draw_entity_items(
             renderer.effect_surface.blit(image, (draw_x, draw_y))
 
 
+def _shares_tile(renderable: Renderable) -> bool:
+    """Walls and floor terrain never crowd a tile; everything else is offset
+    side-by-side when several entities stand on the same tile."""
+    return renderable.wall_set is None and not renderable.floor
+
+
 def draw_entity(
     renderer: "Pygame_Renderer",
     entity: Entity,
-    renderable: Any,
+    renderable: Renderable,
     px: int,
     py: int,
     *,
@@ -634,7 +641,8 @@ def draw_entity(
     if flash_until > time.monotonic():
         scaled_image = flash_tinted_surface(scaled_image, tint=(190, 20, 20), alpha=140)
     is_wall = renderable.wall_set is not None
-    if not is_wall:
+    is_floor = renderable.floor
+    if not is_wall and not is_floor:
         soft_shadow = get_soft_shadow(renderer, sprite_name, sprite_size)
         if soft_shadow is not None:
             shadow_width, shadow_height = soft_shadow.get_size()
@@ -647,6 +655,12 @@ def draw_entity(
         shadow_x = px + (sprite_size - shadow_width) // 2
         shadow_y = py + sprite_size - shadow_height // 2 - max(2, sprite_size // 12)
         renderer.shadow_surface.blit(shadow, (shadow_x, shadow_y))
+    if is_floor:
+        # Walk-on terrain (docks, bridges, rugs): paint into the ground layer so
+        # entities render on top of it, and skip shadow/rings/click-registration —
+        # a floor tile is scenery an agent stands on, not a selectable entity.
+        renderer.floor_surface.blit(scaled_image, (px, py))
+        return
     renderer.entity_surface.blit(scaled_image, (px, py))
     pygame_runtime(renderer).view.last_drawn_entity_rects[entity] = pygame.Rect(px, py, sprite_size, sprite_size)
     draw_selection_ring(renderer, entity, px, py, sprite_size)
@@ -1244,6 +1258,8 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     view = runtime.view
     renderables = scene.layers.get("world.renderables", [])
     background = scene.layers.get("world.background_tiles", [])
+    for _, _, renderable in renderables:
+        apply_behaviour(renderable)
     if view.selected_entity is not None and selected_entity(env, renderer) is None:
         view.selected_entity = None
     if view.camera_focus_entity is not None and view.camera_focus_entity not in env.state.entities:
@@ -1373,7 +1389,10 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             if position is None:
                 continue
             visible_entity_draws.append((entity, renderable, world_position, position))
-            if renderable.wall_set is None:
+            # floor tiles (docks, rugs, bridges) are terrain an agent stands ON,
+            # so they never join the shared-tile group — the agent draws centered
+            # on top instead of being offset side-by-side with the floor.
+            if _shares_tile(renderable):
                 shared_tile_groups.setdefault(world_position, []).append(entity)
 
         positions: dict[Entity, tuple[int, int]] = {}
@@ -1381,7 +1400,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             px, py = position
             draw_rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
             group = shared_tile_groups.get(world_position, [])
-            if renderable.wall_set is None and len(group) > 1:
+            if _shares_tile(renderable) and len(group) > 1:
                 draw_rect = shared_tile_entity_rect(
                     renderer,
                     px,

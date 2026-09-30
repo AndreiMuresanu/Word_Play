@@ -22,6 +22,12 @@ from .pygame_renderer.interactive_env import (
     record_step,
 )
 from .pygame_renderer.renderable import Renderable
+from .behaviours import (
+    Render_Behaviour,
+    apply_behaviour,
+    register_behaviour,
+    resolve_behaviour,
+)
 from .pygame_renderer.replay_and_live import (
     ReplayFrameEnvironment,
     default_replay_renderer,
@@ -56,6 +62,10 @@ __all__ = [
     "Render_Extractor",
     "Render_Scene",
     "Renderable",
+    "Render_Behaviour",
+    "register_behaviour",
+    "resolve_behaviour",
+    "apply_behaviour",
     "Renderer",
     "Renderer_State",
     "ReplayFrameEnvironment",
