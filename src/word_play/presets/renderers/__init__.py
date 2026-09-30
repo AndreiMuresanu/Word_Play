@@ -28,6 +28,7 @@ from .behaviours import (
     register_behaviour,
     resolve_behaviour,
 )
+from .themes import Theme, available_themes, resolve_theme
 from .pygame_renderer.replay_and_live import (
     ReplayFrameEnvironment,
     default_replay_renderer,
@@ -70,6 +71,8 @@ __all__ = [
     "Renderer_State",
     "ReplayFrameEnvironment",
     "SinglePointLayout",
+    "available_themes",
+    "Theme",
     "capture_environment_frame",
     "default_experiment_log_path",
     "default_replay_renderer",
@@ -81,6 +84,7 @@ __all__ = [
     "record_step",
     "render_environment",
     "replay",
+    "resolve_theme",
     "replay_frames",
     "replay_log_path",
 ]

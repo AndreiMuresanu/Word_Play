@@ -7,11 +7,10 @@ from typing import Any, TYPE_CHECKING
 
 from word_play.presets.movement.single_point import Single_Point_Position
 
+from .themes import NEUTRAL_FLOOR_SPRITE
+
 if TYPE_CHECKING:
     from word_play.core import Environment, Render_Context
-
-
-_DEFAULT_FLOOR = "src/world_tiles/indoors/floors/day_brick_floor_c.png"
 
 
 @dataclass(slots=True)
@@ -114,7 +113,7 @@ class Grid_Layout_Adapter(Position_Layout_Adapter):
         if env_tiles:
             return list(env_tiles)
 
-        floor_sprite = str(render_frame.get("world.floor_sprite", _DEFAULT_FLOOR))
+        floor_sprite = str(render_frame.get("world.floor_sprite", NEUTRAL_FLOOR_SPRITE))
         bounds_tiles = _floor_tiles_from_bounds(render_frame.get("world.bounds"), floor_sprite)
         if bounds_tiles:
             return bounds_tiles
@@ -244,6 +243,9 @@ class SinglePointLayout(Position_Layout_Adapter):
         layout_mode: str = "compass",  # "compass" or "circle"
         include_room: bool = False,
         only_agents: bool = False,
+        wall_set: str | None = None,
+        table_sprite: str | None = None,
+        floor_sprite: str | None = None,
     ):
         """
         Args:
@@ -252,6 +254,10 @@ class SinglePointLayout(Position_Layout_Adapter):
             layout_mode: "compass" (N/E/S/W slots) or "circle" (pure circular)
             include_room: If True, generate room walls and floor tiles
             only_agents: If True, only position agents (ignore non-agent entities)
+            wall_set, table_sprite, floor_sprite: room dressing. Accepts literal
+                paths OR bare theme role names ("wall", "table", "default_floor")
+                that the renderer resolves against its active theme. Defaults
+                keep the historical kitchen look.
         """
         self.base_x = center_x
         self.base_y = center_y
@@ -259,6 +265,9 @@ class SinglePointLayout(Position_Layout_Adapter):
         self.layout_mode = layout_mode
         self.include_room = include_room
         self.only_agents = only_agents
+        self.wall_set = wall_set or self.WALL_SET
+        self.table_sprite = table_sprite or self.TABLE_SPRITE
+        self.floor_sprite = floor_sprite or self.DEFAULT_FLOOR
 
     def _runtime_state(self, context: "Render_Context | None") -> _SinglePointLayoutState:
         if context is None:
@@ -276,10 +285,9 @@ class SinglePointLayout(Position_Layout_Adapter):
         else:
             return 11, 9
 
-    @staticmethod
-    def _get_floor_sprite() -> str:
-        """Get a nice floor sprite."""
-        return SinglePointLayout.DEFAULT_FLOOR
+    def _get_floor_sprite(self) -> str:
+        """Get the configured floor sprite (literal path or theme role name)."""
+        return self.floor_sprite
 
     def prepare_env(self, env: "Environment", context: "Render_Context | None" = None) -> None:
         """Calculate visual positions for entities at this point."""
@@ -371,7 +379,7 @@ class SinglePointLayout(Position_Layout_Adapter):
                         "x": abs_x,
                         "y": abs_y,
                         "kind": "floor",
-                        "sprite": self.TABLE_SPRITE,
+                        "sprite": self.table_sprite,
                     })
                 else:
                     tiles.append({
@@ -398,7 +406,7 @@ class SinglePointLayout(Position_Layout_Adapter):
                     "x": abs_x,
                     "y": abs_y,
                     "kind": "wall",
-                    "wall_set": self.WALL_SET,
+                    "wall_set": self.wall_set,
                 })
 
         runtime.cached_background = tiles

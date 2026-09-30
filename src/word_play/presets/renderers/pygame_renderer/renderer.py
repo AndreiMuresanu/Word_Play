@@ -6,6 +6,7 @@ import pygame
 
 from word_play.core import Render_Context, Render_Extractor, Render_Result, Render_Scene, Renderer, Renderer_State
 
+from ..themes import NEUTRAL_FLOOR_SPRITE, resolve_theme
 from .chrome import resolve_chrome
 from .draw import render_environment
 from .extractors import default_pygame_extractors
@@ -24,8 +25,9 @@ class Pygame_Renderer(Renderer):
         self,
         layout: "Position_Layout_Adapter",
         tile_size: int = 32,
-        default_floor_sprite: str = "sprite_library/src/world_tiles/indoors/floors/day_grass_floor_c.png",
+        default_floor_sprite: str | None = None,
         extractors: Sequence[Render_Extractor] | None = None,
+        theme: "str | None" = None,
         mood: "str | None" = None,
         chrome: "str | None" = None,
     ):
@@ -35,12 +37,19 @@ class Pygame_Renderer(Renderer):
             layout=layout,
             tile_size=tile_size,
         )
-        # UI chrome: explicit argument wins, else rustic.
-        self.chrome_theme = resolve_chrome(chrome)
+        self.theme = resolve_theme(theme)
+        # UI chrome: explicit argument wins, else the theme's choice, else rustic.
+        chrome_name = chrome if chrome is not None else (None if self.theme is None else self.theme.chrome)
+        self.chrome_theme = resolve_chrome(chrome_name)
         if mood is not None:
             from .beautify import apply_mood
 
             apply_mood(self.beautify, mood)
+        if default_floor_sprite is None:
+            # the theme's default_floor, else a procedural neutral tile (never a
+            # town asset for themeless envs)
+            themed_floor = None if self.theme is None else self.theme.sprite("default_floor")
+            default_floor_sprite = themed_floor or NEUTRAL_FLOOR_SPRITE
         self.default_floor_sprite = default_floor_sprite
         self.extractors: list[Render_Extractor] = list(extractors or default_pygame_extractors(layout))
 

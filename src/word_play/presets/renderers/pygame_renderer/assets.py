@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from ..themes import MISSING_ROLE_PREFIX, NEUTRAL_FLOOR_SPRITE, _project_root, is_sprite_name, resolve_sprite
 from .beautify import build_soft_shadow, harmonize_surface
 from .runtime import pygame_runtime
 from .wall_geometry import adjacent_wall_variant_name, wall_connections
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
 
 def candidate_asset_paths(asset_name: str) -> list[Path]:
     """Return the filesystem locations to try for a sprite or asset name."""
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = _project_root()
     return [
         Path(asset_name),
         project_root / asset_name,
@@ -23,11 +24,63 @@ def candidate_asset_paths(asset_name: str) -> list[Path]:
     ]
 
 
+
+
+def neutral_floor_surface() -> pygame.Surface:
+    """A quiet procedural ground tile for environments with no theme or floor art.
+
+    Unlike the magenta missing-role checker, this is a legitimate default (an
+    intentional neutral stage, not an authoring error), so it stays subtle: a
+    barely-there two-tone check with a few deterministic speckles.
+    """
+    size, cell = 16, 8
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    for cy in range(0, size, cell):
+        for cx in range(0, size, cell):
+            color = (74, 78, 84) if ((cx + cy) // cell) % 2 == 0 else (70, 74, 80)
+            surface.fill(color, pygame.Rect(cx, cy, cell, cell))
+    for i, (sx, sy) in enumerate(((3, 5), (11, 2), (7, 12), (13, 10))):
+        speckle = (66, 70, 76) if i % 2 else (80, 84, 90)
+        surface.fill(speckle, pygame.Rect(sx, sy, 1, 1))
+    return surface
+
+
+def missing_role_surface(role: str) -> pygame.Surface:
+    """The magenta/black checkerboard drawn for roles a theme doesn't bind.
+
+    Loud on purpose (the classic missing-texture convention): the sim keeps
+    running and the author can see exactly which tile is unbound.
+    """
+    size, cell = 16, 4
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    for cy in range(0, size, cell):
+        for cx in range(0, size, cell):
+            color = (222, 44, 222) if ((cx + cy) // cell) % 2 == 0 else (16, 8, 16)
+            surface.fill(color, pygame.Rect(cx, cy, cell, cell))
+    return surface
+
+
 def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | None:
     """Load a sprite once and reuse it from the renderer cache."""
     session = pygame_runtime(renderer).session
     if sprite_name in session.image_cache:
         return session.image_cache[sprite_name]
+
+    if is_sprite_name(sprite_name):
+        # bare name ("tree"): theme, then library index, then placeholder
+        surface = get_or_load_image(renderer, resolve_sprite(renderer.theme, sprite_name))
+        session.image_cache[sprite_name] = surface
+        return surface
+
+    if sprite_name.startswith(MISSING_ROLE_PREFIX):
+        surface = missing_role_surface(sprite_name.removeprefix(MISSING_ROLE_PREFIX))
+        session.image_cache[sprite_name] = surface
+        return surface
+
+    if sprite_name == NEUTRAL_FLOOR_SPRITE:
+        surface = neutral_floor_surface()
+        session.image_cache[sprite_name] = surface
+        return surface
 
     for path in candidate_asset_paths(sprite_name):
         if path.exists() and path.is_file():
@@ -99,7 +152,8 @@ def _resolve_wall_sprite_uncached(
             None,
         )
         if wall_root is None:
-            raise FileNotFoundError(f"Wall set folder could not be resolved: '{wall_set}'.")
+            # missing wall art degrades to the caller's placeholder, not a crash
+            return None
         session.wall_root_cache[wall_set] = wall_root
 
     available = session.wall_set_cache.get(wall_set)

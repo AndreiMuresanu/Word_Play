@@ -8,7 +8,9 @@ class Renderable(Component):
 
     Two orthogonal knobs:
 
-    * ``sprite_path`` — WHICH sprite: a path to the sprite file (``"a/b.png"``).
+    * ``sprite_path`` — WHICH sprite. A literal path (``"a/b.png"``) or a bare
+      sprite-name (``"tree"``, ``"villager_baker"``, ``"dock"``) that the renderer
+      resolves at draw time (active theme first, then the library-wide index).
       The renderer never rewrites it. This is the only thing that picks pixels.
     * ``behaviour`` — HOW it behaves on screen: a behaviour preset from the
       general registry in ``word_play.presets.renderers.behaviours`` (e.g.

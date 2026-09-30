@@ -15,7 +15,7 @@ from .assets import (
     get_soft_shadow,
     resolve_wall_sprite,
 )
-from ..behaviours import apply_behaviour
+from ..themes import apply_theme_defaults, placeholder, resolve_sprite
 from .chrome import active_chrome
 from .fonts import render_text, wrap_text_lines
 from .wall_geometry import collect_wall_positions, screen_rect_for_tile, wall_neighbor_mask, world_bounds
@@ -500,7 +500,7 @@ def blit_scaled_sprite(
     if image is None:
         if missing_ok:
             return False
-        raise FileNotFoundError(f"Sprite could not be resolved: '{sprite_name}'.")
+        image = get_scaled_image(renderer, placeholder(sprite_name, "blit"), width, height)
 
     if anchor == "top_right":
         draw_x = px + renderer.tile_size - width
@@ -520,7 +520,7 @@ def draw_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, px: int, py: in
     """Draw a wall tile using the best matching sprite variant."""
     sprite_name = resolve_wall_sprite(renderer, wall_set, neighbors)
     if sprite_name is None:
-        raise FileNotFoundError(f"Wall set '{wall_set}' has no matching sprite variant for neighbors {neighbors}.")
+        sprite_name = placeholder(wall_set, "wall set")
     blit_scaled_sprite(
         renderer,
         sprite_name,
@@ -547,10 +547,20 @@ def draw_wall_background_tile(
 
     wall_set = item.get("wall_set")
     if not wall_set:
-        raise ValueError(f"Wall background tile is missing 'wall_set': {item!r}")
+        rect = pygame.Rect(px, py, renderer.tile_size, renderer.tile_size)
+        pygame.draw.rect(renderer.floor_surface, (40, 50, 60), rect)
+        placeholder(f"wall tile at ({item.get('x')}, {item.get('y')})", "missing wall_set")
+        return True
+
+    wall_set = str(wall_set)
+    # bare role names ("wall") resolve through the active theme
+    if "/" not in wall_set:
+        resolved_set = None if renderer.theme is None else renderer.theme.wall_set(wall_set)
+        if resolved_set is not None:
+            wall_set = resolved_set
 
     neighbors = wall_neighbor_mask(int(item["x"]), int(item["y"]), wall_positions)
-    return draw_wall_sprite(renderer, str(wall_set), px, py, neighbors)
+    return draw_wall_sprite(renderer, wall_set, px, py, neighbors)
 
 
 def draw_entity_items(
@@ -606,17 +616,12 @@ def draw_entity(
 ) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
     sprite_size = draw_size or renderer.tile_size
-    sprite_name = sprite_name_override or renderable.sprite_path
+    sprite_name = resolve_sprite(renderer.theme, sprite_name_override or renderable.sprite_path)
     image = get_or_load_image(renderer, sprite_name)
     if image is None:
-        raise FileNotFoundError(
-            f"Sprite renderer expected a valid sprite path for '{entity.name}', but could not resolve '{sprite_name}'."
-        )
+        sprite_name = placeholder(sprite_name, f"entity '{entity.name}'")
+        image = get_or_load_image(renderer, sprite_name)
     scaled_image = get_scaled_image(renderer, sprite_name, sprite_size, sprite_size)
-    if scaled_image is None:
-        raise FileNotFoundError(
-            f"Sprite renderer expected a valid sprite path for '{entity.name}', but could not resolve '{sprite_name}'."
-        )
     # team/ownership recolor: multiply toward the tint hue (keeps the ink
     # outline dark, unlike an additive flash) — cached per sprite state
     tint = renderable.tint
@@ -784,7 +789,9 @@ def draw_background_tile(
 
     sprite_name = item.get("sprite")
     if not sprite_name:
-        raise ValueError(f"Background tile kind '{kind}' is missing required 'sprite': {item!r}")
+        sprite_name = placeholder(f"{kind} tile at ({item.get('x')}, {item.get('y')})", "missing sprite")
+    else:
+        sprite_name = resolve_sprite(renderer.theme, str(sprite_name))
 
     image = get_scaled_image(renderer, sprite_name, renderer.tile_size, renderer.tile_size)
     if image is None:
@@ -1258,8 +1265,9 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     view = runtime.view
     renderables = scene.layers.get("world.renderables", [])
     background = scene.layers.get("world.background_tiles", [])
+    theme = renderer.theme
     for _, _, renderable in renderables:
-        apply_behaviour(renderable)
+        apply_theme_defaults(renderable, theme)
     if view.selected_entity is not None and selected_entity(env, renderer) is None:
         view.selected_entity = None
     if view.camera_focus_entity is not None and view.camera_focus_entity not in env.state.entities:
