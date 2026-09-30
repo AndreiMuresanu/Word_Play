@@ -114,7 +114,7 @@ def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str) -> str 
     """Return ``foo<suffix>.png`` if it exists next to ``foo.png`` (cached).
 
     The file-name conventions that need no authoring: ``_2`` (second animation
-    frame).
+    frame), ``_back`` (rear view).
     """
     session = pygame_runtime(renderer).session
     key = (suffix, sprite_name)
@@ -130,6 +130,10 @@ def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str) -> str 
 
 def animation_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
     return _sibling(renderer, sprite_name, "_2")
+
+
+def back_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_back")
 
 
 def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:

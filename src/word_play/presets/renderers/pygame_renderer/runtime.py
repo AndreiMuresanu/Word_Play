@@ -93,6 +93,15 @@ class Pygame_View_State:
     camera_focus_entity: Any | None = None
     camera_focus_radius_tiles: int = 1
     last_drawn_entity_rects: dict[Any, pygame.Rect] = field(default_factory=dict)
+    # smooth-movement traverses: entity -> (start_x, start_y, target_x, target_y, t0, duration, ease)
+    entity_glide: dict[Any, tuple[float, float, float, float, float, float, bool]] = field(default_factory=dict)
+    # entities currently gliding between tiles (drives faster walk animation)
+    entities_in_motion: set = field(default_factory=set)
+    # facing per entity: "right" (native), "left" (mirrored), "up" (rear view), "down"
+    entity_facing: dict[Any, str] = field(default_factory=dict)
+    # EMA of the sim-step cadence so glides span the whole interval
+    glide_interval_ema: float = 1.0
+    glide_last_change: float = 0.0
 
 
 @dataclass(slots=True)

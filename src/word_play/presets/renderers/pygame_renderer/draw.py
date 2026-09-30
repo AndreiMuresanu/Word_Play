@@ -11,6 +11,7 @@ from word_play.presets.systems.inventory import Inventory
 
 from .assets import (
     animation_sibling,
+    back_sibling,
     get_or_load_image,
     get_scaled_image,
     get_soft_shadow,
@@ -257,6 +258,11 @@ def flash_tinted_surface(image: Any, *, tint: tuple[int, int, int], alpha: int) 
     return tinted
 
 
+def _smoothstep(progress: float) -> float:
+    """Ease-in/out for hops that begin at rest: soft start, soft landing."""
+    return progress * progress * (3.0 - 2.0 * progress)
+
+
 def interpolated_entity_screen_position(
     renderer: "Pygame_Renderer",
     env: "Environment",
@@ -267,14 +273,80 @@ def interpolated_entity_screen_position(
     offset_x: int = 0,
     offset_y: int = 0,
 ) -> tuple[int, int] | None:
-    """Get entity screen position - NO interpolation, NO bobbing."""
+    """Entity screen position, gliding smoothly toward its tile when enabled.
+
+    Glide state lives in world TILE coordinates (not screen pixels), so a
+    panning or zooming camera never disturbs an in-flight traverse.
+    """
     world_position = entity_world_position(renderer, env, entity)
     if world_position is None:
         return None
 
-    # Direct position - no interpolation, no smoothing, no bobbing
-    px, py = screen_rect_for_tile(renderer, world_position[0], world_position[1], min_x, max_y)
-    return px + offset_x, py + offset_y
+    def to_screen(tile_x: float, tile_y: float) -> tuple[int, int]:
+        px = renderer.viewport_pad_w + (tile_x - min_x) * renderer.tile_size + offset_x
+        py = renderer.viewport_pad_n + (max_y - tile_y) * renderer.tile_size + offset_y
+        return int(round(px)), int(round(py))
+
+    target_x, target_y = float(world_position[0]), float(world_position[1])
+
+    config = renderer.beautify
+    if not config.enabled or not config.smooth_movement:
+        return to_screen(target_x, target_y)
+
+    view = pygame_runtime(renderer).view
+    now = time.monotonic()
+    prev = view.entity_glide.get(entity)
+    if prev is None:
+        view.entity_glide[entity] = (target_x, target_y, target_x, target_y, now, 0.0, False)
+        view.entities_in_motion.discard(entity)
+        return to_screen(target_x, target_y)
+
+    start_x, start_y, tx, ty, t0, duration, ease = prev
+    progress = 1.0 if duration <= 0 else min(1.0, max(0.0, (now - t0) / duration))
+    curved = _smoothstep(progress) if ease else progress
+    shown_x = start_x + (tx - start_x) * curved
+    shown_y = start_y + (ty - start_y) * curved
+
+    if (tx, ty) != (target_x, target_y):
+        # New target: learn the sim-step cadence (EMA) and start a traverse that
+        # spans ~90% of it — constant velocity, walking the whole interval
+        # instead of dashing and freezing.
+        interval = now - view.glide_last_change
+        if 0.05 < interval < 5.0:
+            view.glide_interval_ema = 0.6 * view.glide_interval_ema + 0.4 * interval
+            view.glide_last_change = now
+        elif view.glide_last_change == 0.0:
+            view.glide_last_change = now
+        was_resting = progress >= 1.0
+        delay = 0.0
+        if abs(target_x - shown_x) + abs(target_y - shown_y) > 3.2:
+            shown_x, shown_y = target_x, target_y      # teleport: snap
+            duration = 0.0
+            ease = False
+        else:
+            # A lockstep sim step would otherwise read as one synchronized
+            # hop. Each entity waits out its own stable slice of the interval
+            # before walking (de-synced crowd), and a hop that begins at rest
+            # eases in and out instead of snapping to full speed.
+            span = view.glide_interval_ema * 0.9
+            delay = ((id(entity) >> 4) % 977) / 977.0 * 0.25 * span
+            duration = min(2.5, max(0.18, span - delay))
+            ease = was_resting
+        dx, dy = target_x - shown_x, target_y - shown_y
+        if abs(dx) >= abs(dy) and abs(dx) > 0.02:
+            view.entity_facing[entity] = "right" if dx > 0 else "left"
+        elif abs(dy) > 0.02:
+            # world-y grows northward: walking up-screen means walking away
+            view.entity_facing[entity] = "up" if dy > 0 else "down"
+        view.entity_glide[entity] = (shown_x, shown_y, target_x, target_y, now + delay, duration, ease)
+        progress = 0.0 if duration else 1.0
+
+    if progress >= 1.0:
+        view.entities_in_motion.discard(entity)
+        shown_x, shown_y = target_x, target_y
+    else:
+        view.entities_in_motion.add(entity)
+    return to_screen(shown_x, shown_y)
 
 
 def overlap_grid_dimensions(count: int) -> tuple[int, int]:
@@ -604,8 +676,13 @@ def animated_sprite_name(
     sprite_name: str,
     *,
     stagger: int = 0,
+    fast: bool = False,
 ) -> str:
-    """Swap in the '_2' frame on alternating ticks when a sibling exists."""
+    """Swap in the '_2' frame on alternating ticks when a sibling exists.
+
+    ``fast`` (used while an entity glides between tiles) more than doubles the
+    frame rate, which reads as a walk cycle.
+    """
     config = renderer.beautify
     if not config.enabled or not config.animate:
         return sprite_name
@@ -615,7 +692,7 @@ def animated_sprite_name(
     sibling = animation_sibling(renderer, sprite_name)
     if sibling is None:
         return sprite_name
-    period = max(0.05, config.animation_period)
+    period = max(0.05, config.animation_period / (2.5 if fast else 1.0))
     tick = int(time.monotonic() / period)
     return sibling if (tick + stagger) % 2 else sprite_name
 
@@ -648,16 +725,29 @@ def draw_entity(
 ) -> None:
     """Draw an entity sprite, including damage flash and optional overlay."""
     sprite_size = draw_size or renderer.tile_size
-    # resolve a bare name to its file first: the _2 sibling convention
-    # below works on real paths
+    # resolve a bare name to its file first: the _back/_2 sibling
+    # conventions below work on real paths
     sprite_name = resolve_sprite(renderer.theme, sprite_name_override or renderable.sprite_path)
-    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=id(entity) >> 6)
+    view = pygame_runtime(renderer).view
+    in_motion = entity in view.entities_in_motion
+    facing = view.entity_facing.get(entity, "down")
+    if facing == "up":
+        rear = back_sibling(renderer, sprite_name)
+        if rear is not None:
+            sprite_name = rear
+    sprite_name = animated_sprite_name(renderer, sprite_name, stagger=id(entity) >> 6, fast=in_motion)
     image = get_or_load_image(renderer, sprite_name)
     if image is None:
         sprite_name = placeholder(sprite_name, f"entity '{entity.name}'")
         image = get_or_load_image(renderer, sprite_name)
     draw_height = sprite_draw_height(renderer, image, sprite_size)
     scaled_image = get_scaled_image(renderer, sprite_name, sprite_size, draw_height)
+    if facing == "left" and renderable.wall_set is None:
+        cache = pygame_runtime(renderer).session.scaled_image_cache
+        unflipped = scaled_image
+        scaled_image = cache.get_or_build(
+            (sprite_name, sprite_size, draw_height, -1), lambda: pygame.transform.flip(unflipped, True, False)
+        )
     # team/ownership recolor: multiply toward the tint hue (keeps the ink
     # outline dark, unlike an additive flash) — cached per sprite state
     tint = renderable.tint
@@ -675,7 +765,7 @@ def draw_entity(
             cache = pygame_runtime(renderer).session.scaled_image_cache
             tint_key = (
                 "__tint__", sprite_name, sprite_size, draw_height,
-                tuple(tint), round(tint_strength, 2),
+                facing == "left", tuple(tint), round(tint_strength, 2),
             )
             scaled_image = cache.get_or_build(tint_key, build_tinted)
     flash_until = pygame_runtime(renderer).effects.damage_flash_until.get(entity, 0.0)
@@ -1312,6 +1402,13 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
         view.selected_entity = None
     if view.camera_focus_entity is not None and view.camera_focus_entity not in env.state.entities:
         view.camera_focus_entity = None
+    if view.entity_glide:
+        live = set(env.state.entities)
+        for stale in [e for e in view.entity_glide if e not in live]:
+            del view.entity_glide[stale]
+            view.entities_in_motion.discard(stale)
+            view.entity_facing.pop(stale, None)
+
     min_world_x, max_world_x, min_world_y, max_world_y = world_bounds(renderer, env, background, renderables)
     full_grid_width = max(1, max_world_x - min_world_x + 1)
     full_grid_height = max(1, max_world_y - min_world_y + 1)
