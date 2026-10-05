@@ -54,8 +54,6 @@ class Renderable(Component):
         self.sprite_path = sprite_path
         self.behaviour = behaviour          # behaviour preset (see behaviours.py)
         self.action = action                # active DYNAMIC behaviour, or None
-        #   (a runtime state the sim toggles: pose/facing/effect while active —
-        #   see dynamic_behaviours.py)
         self.glow = glow  # RGB light color; composited when the scene has ambient
         self.glow_radius = glow_radius      # in tiles
         self.glow_strength = glow_strength  # 1.0 = standard lamp
@@ -68,9 +66,7 @@ class Renderable(Component):
         self.overlay_sprite = overlay_sprite
         self.overlay_mode = overlay_mode
         self.overlay_scale = overlay_scale
-        # team/ownership recolor: multiply the sprite toward `tint` (preserves
-        # the ink outline). One field covers CTF teams, coin ownership, berry
-        # colors, gem grades — no per-variant art needed.
+        # multiply toward `tint` (keeps the outline dark)
         self.tint = tint
         self.tint_strength = tint_strength
 

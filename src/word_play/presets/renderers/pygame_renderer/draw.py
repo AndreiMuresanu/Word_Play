@@ -224,9 +224,7 @@ def update_camera_state(
             effects.camera_shake_strength = (
                 0.0 if effects.camera_shake_until <= time.monotonic() else effects.camera_shake_strength
             )
-            # Float camera: ease the center toward the focus entity so the view
-            # pans in sub-tile pixels instead of lurching a whole tile whenever
-            # the entity crosses a tile boundary (Keren, "Scroll Back").
+            # Ease the camera toward the focus entity so it pans sub-tile instead of lurching.
             now = time.monotonic()
             dt = min(0.1, max(0.0, now - view.camera_pan_time)) if view.camera_pan_time else 0.0
             view.camera_pan_time = now
@@ -335,9 +333,7 @@ def interpolated_entity_screen_position(
     shown_y = start_y + (ty - start_y) * curved
 
     if (tx, ty) != (target_x, target_y):
-        # New target: learn the sim-step cadence (EMA) and start a traverse that
-        # spans ~90% of it — constant velocity, walking the whole interval
-        # instead of dashing and freezing.
+        # New target: update the step-cadence EMA and glide over ~90% of it.
         interval = now - view.glide_last_change
         if 0.05 < interval < 5.0:
             view.glide_interval_ema = 0.6 * view.glide_interval_ema + 0.4 * interval
@@ -351,10 +347,7 @@ def interpolated_entity_screen_position(
             duration = 0.0
             ease = False
         else:
-            # A lockstep sim step would otherwise read as one synchronized
-            # hop. Each entity waits out its own stable slice of the interval
-            # before walking (de-synced crowd), and a hop that begins at rest
-            # eases in and out instead of snapping to full speed.
+            # Stagger each entity's start so a lockstep step isn't one synchronized hop.
             span = view.glide_interval_ema * 0.9
             delay = ((id(entity) >> 4) % 977) / 977.0 * 0.25 * span
             duration = min(2.5, max(0.18, span - delay))
@@ -653,7 +646,6 @@ def draw_wall_background_tile(
         return True
 
     wall_set = str(wall_set)
-    # bare role names ("wall") resolve through the active theme
     if "/" not in wall_set:
         resolved_set = None if renderer.theme is None else renderer.theme.wall_set(wall_set)
         if resolved_set is not None:
@@ -756,10 +748,7 @@ def draw_dynamic_effect(
     cy = py + sprite_size // 2 + int(dy * sprite_size * dynamic.effect_forward)
     if image is not None:
         if dynamic.impact:
-            # punch the burst bright on a fast beat instead of letting it idle, so
-            # a swing reads as a landing hit. Quantize the pulse to a few discrete
-            # brightness buckets and cache the lit surfaces (like the tint cache),
-            # so a busy scene reuses ~5 variants instead of copying every frame.
+            # Pulse the burst in a few quantized brightness buckets, cached.
             glow = 0.5 + 0.5 * math.sin(time.monotonic() * 18.0 + (px + py))
             bucket = min(4, int(glow * 4))
             add = int(70 * (bucket / 4.0))
@@ -773,8 +762,7 @@ def draw_dynamic_effect(
             image = cache.get_or_build(("__impact__", sprite, size, bucket), build_lit)
         renderer.effect_surface.blit(image, (cx - size // 2, cy - size // 2))
     if dynamic.impact:
-        # an expanding shock-ring — cheap, and it sells the impact even with no
-        # effect art at all (missing sprites are a no-op by contract)
+        # Shock ring sells the hit even with no effect art.
         ring = (size // 3) + int((0.5 + 0.5 * math.sin(time.monotonic() * 12.0 + cx)) * size * 0.5)
         if ring > 2:
             pygame.draw.circle(renderer.effect_surface, (255, 236, 170), (cx, cy), ring, width=max(1, size // 12))
@@ -895,8 +883,7 @@ def draw_entity(
             posed = pose_sibling(renderer, sprite_name, dynamic.pose)
             if posed is not None:
                 sprite_name = posed
-    # recoil / tremble: jitter the sprite (its shadow stays put, so it reads as
-    # motion, not a teleport) — a struck sheep flinches, a hammered anvil buzzes
+    # Jitter the sprite but not its shadow, so it reads as a shake.
     shake_dx = shake_dy = 0
     if dynamic is not None and dynamic.shake:
         amp = dynamic.shake * sprite_size
@@ -921,8 +908,7 @@ def draw_entity(
         scaled_image = cache.get_or_build(
             (sprite_name, sprite_size, draw_height, -1), lambda: pygame.transform.flip(unflipped, True, False)
         )
-    # team/ownership recolor: multiply toward the tint hue (keeps the ink
-    # outline dark, unlike an additive flash) — cached per sprite state
+    # Multiply tint keeps the dark outline; cached per sprite state.
     tint = renderable.tint
     if tint is not None:
         tint_strength = max(0.0, min(1.0, renderable.tint_strength))
@@ -961,9 +947,7 @@ def draw_entity(
         renderer.shadow_surface.blit(shadow, (shadow_x, shadow_y))
     draw_py = py - (draw_height - sprite_size)          # bottom-anchor tall sprites
     if is_floor:
-        # Walk-on terrain (docks, bridges, rugs): paint into the ground layer so
-        # entities render on top of it, and skip shadow/rings/click-registration —
-        # a floor tile is scenery an agent stands on, not a selectable entity.
+        # Walk-on floor art paints into the ground layer and is not selectable.
         renderer.floor_surface.blit(scaled_image, (px + shake_dx, draw_py + shake_dy))
         return
     renderer.entity_surface.blit(scaled_image, (px + shake_dx, draw_py + shake_dy))
@@ -1103,7 +1087,6 @@ def draw_background_tile(
     else:
         sprite_name = resolve_sprite(renderer.theme, str(sprite_name))
 
-    # positional variety first (grass patches etc.), then animation frame swap
     tile_x, tile_y = int(item.get("x", 0)), int(item.get("y", 0))
     sprite_name = ground_variant_name(renderer, sprite_name, tile_x, tile_y)
     sprite_name = animated_sprite_name(renderer, sprite_name, stagger=tile_x + tile_y, tick=tick)
@@ -1456,8 +1439,7 @@ def draw_chimney_smoke(renderer: "Pygame_Renderer", sources: list[tuple[int, int
             if alpha <= 6:
                 continue
             size = 2 + int(progress * 3)
-            # alpha quantized to 16 steps so the fading puffs reuse a small
-            # set of cached surfaces instead of allocating one per puff per frame
+            # Quantized alpha so fading puffs reuse cached surfaces.
             q_alpha = min(120, (alpha // 16) * 16 + 8)
             puff = session.scaled_image_cache.get_or_build(
                 ("__puff__", size, q_alpha), lambda: _puff_surface(size, q_alpha)
@@ -1483,9 +1465,7 @@ def draw_ambient_particles(renderer: "Pygame_Renderer", bounds: pygame.Rect) -> 
         brightness = pulse * (0.4 + 0.6 * ((seed >> 16) % 100) / 100)
         if brightness < 0.12:
             continue
-        # soft bloom under a bright 1px core, so motes glow instead of reading
-        # as stuck square pixels; colors quantized so the pulsing motes reuse
-        # cached surfaces instead of minting new ones every frame
+        # Soft bloom under a bright core; quantized colours reuse cached surfaces.
         bloom_color = tuple((int(c * brightness) // 8) * 8 for c in color)
         bloom = _glow_surface(renderer, bloom_color, 5, 0.9)
         renderer.screen.blit(bloom, (px - 5, py - 5), special_flags=pygame.BLEND_RGB_ADD)
@@ -1641,9 +1621,7 @@ def draw_world_vignette(renderer: "Pygame_Renderer", world_x: int, world_width: 
     session = pygame_runtime(renderer).session
     overlay = session.overlay_cache.get(cache_key)
     if overlay is None:
-        # Build the radial falloff at low resolution and smoothscale up: the
-        # gradient is low-frequency, so this reads identically to a per-pixel
-        # build while avoiding ~1.5M Python set_at calls on first frame/resize.
+        # Build the radial falloff at low res and smoothscale up; per-pixel set_at is too slow.
         low_w = max(2, min(160, world_width))
         low_h = max(2, min(160, int(round(low_w * world_height / max(1, world_width)))))
         field = pygame.Surface((low_w, low_h), pygame.SRCALPHA)
@@ -1801,8 +1779,7 @@ def draw_speech_bubbles(
         bubble_y = max(6, anchor_y - bubble_height - tail_height - vertical_offset)
 
         bubble_rect = pygame.Rect(bubble_x, bubble_y, bubble_width, bubble_height)
-        # de-overlap: if this bubble collides with one already placed (a nearby
-        # speaker's), lift it above so both stay readable instead of stacking
+        # Lift bubbles that collide with one already placed.
         for _ in range(len(placed_bubble_rects)):
             hit = next((r for r in placed_bubble_rects
                         if bubble_rect.colliderect(r.inflate(4, 4))), None)
@@ -1861,9 +1838,7 @@ def auto_tiled_wall_sprites(
             wall_positions.add(world_position)
             wall_entities.append((entity, renderable, world_position))
 
-    # Memo on (wall_set, position): replay rebuilds Entity objects every frame,
-    # so an id(entity) key could match while the cached dict pointed at freed
-    # objects. The per-position result is re-mapped onto the live entities.
+    # Memo on positions, not id(entity): replay rebuilds entities and ids get reused.
     cache_key = tuple((renderable.wall_set, position) for _, renderable, position in wall_entities)
     if cache_key == session.wall_override_key:
         by_position = session.wall_override_result
@@ -2047,9 +2022,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     view_offset_x = max(0, (tile_area_width - view_grid_width * active_tile_size) // 2)
     view_offset_y = max(0, (tile_area_height - view_grid_height * active_tile_size) // 2)
 
-    # Float camera: the fractional window origin becomes a sub-tile pixel pan.
-    # Layout stays on the integer window; culling widens by one tile on the max
-    # side to fill the strip the pan reveals; a clip keeps it inside the view box.
+    # The fractional window origin becomes a sub-tile pixel pan; cull one extra tile and clip.
     frac_x, frac_y = view.camera_frac
     camera_clip: pygame.Rect | None = None
     if view.camera_focus_entity is not None:
@@ -2081,9 +2054,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
 
     chrome = active_chrome(renderer)
     renderer.screen.fill(chrome.backdrop)
-    # Layer surfaces persist across frames (cleared, not reallocated): four
-    # full-screen SRCALPHA allocations per frame were the largest source of
-    # allocator churn and frame-time spikes.
+    # Layer surfaces are reused across frames to avoid per-frame allocations.
     session = runtime.session
     layer_size = (world_width, world_height)
     if session.layer_size != layer_size:
@@ -2112,10 +2083,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     renderer.tile_size = active_tile_size
     try:
         if view.camera_focus_entity is None:
-            # Full-map mode: the background is static geometry — blit the baked
-            # layer instead of re-drawing every tile (and re-autotiling every
-            # wall) each frame. Focus mode keeps the per-tile path: its window
-            # is small and pans sub-tile every frame.
+            # Full-map mode blits the baked static background; focus mode pans, so it redraws.
             baked = _baked_floor_layer(
                 renderer,
                 scene,
@@ -2193,9 +2161,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
             if position is None:
                 continue
             visible_entity_draws.append((entity, renderable, world_position, position))
-            # floor tiles (docks, rugs, bridges) are terrain an agent stands ON,
-            # so they never join the shared-tile group — the agent draws centered
-            # on top instead of being offset side-by-side with the floor.
+            # Floor tiles never join the shared-tile group, so agents draw centred on them.
             if _shares_tile(renderable):
                 shared_tile_groups.setdefault(world_position, []).append(entity)
 
@@ -2220,8 +2186,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 strength = renderable.glow_strength
                 flicker = renderable.flicker
                 if flicker:
-                    # flame waver: a per-entity phase keeps neighboring fires out
-                    # of sync so a row of torches doesn't pulse in lockstep
+                    # Per-entity phase so neighbouring flames don't pulse in sync.
                     phase = (id(entity) % 1000) / 1000.0 * math.tau
                     strength *= 1.0 + flicker * math.sin(time.monotonic() * 7.0 + phase)
                 glow_draws.append((
@@ -2251,9 +2216,7 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 sprite_name_override=wall_sprite_overrides.get(entity),
             )
 
-        # UI overlays (smoke, speech bubbles, inspector card, hit effects)
-        # intentionally rise into the viewport padding; the cull-margin clip
-        # must not cut them. World-tied content above keeps the clip.
+        # Overlays may rise into the viewport padding, so drop the cull clip.
         renderer.effect_surface.set_clip(None)
         draw_chimney_smoke(renderer, smoke_draws)
         draw_hit_effects(renderer, scene, positions)
@@ -2269,22 +2232,17 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
     renderer.screen.blit(renderer.entity_surface, (world_x, 0))
     renderer.screen.blit(renderer.effect_surface, (world_x, 0))
     if ambient_wash is not None or ambient_mult is not None or emissive_draws:
-        # lights ramp up exactly as the ambient ramps down (Stardew/Graveyard Keeper)
         glow_scale = 1.0 if light_level <= 0.0 else 0.35 + 0.65 * light_level
         if ambient_mult is not None:
             if glow_draws:
-                # One low-res lightmap seeded with the ambient darkness, lamp discs
-                # added INTO it, multiplied over the frame (Godot CanvasModulate /
-                # Stardew drawLightmap pattern): lamps carve their true colors back
-                # out of the night instead of hazing over the wash.
+                # Low-res lightmap: ambient darkness plus lamp discs, multiplied over the frame.
                 lightmap = _render_lightmap(
                     renderer, world_width, world_height, ambient_mult, glow_draws, glow_scale,
                     tile_size=active_tile_size,
                 )
                 renderer.screen.blit(lightmap, (world_x, 0), special_flags=pygame.BLEND_RGB_MULT)
             else:
-                # No lamps: multiplying by a constant lightmap is just a flat
-                # multiply — skip the per-frame surface fill + smoothscale.
+                # No lamps: a flat multiply is enough.
                 renderer.screen.fill(
                     ambient_mult,
                     pygame.Rect(world_x, 0, world_width, world_height),
@@ -2293,18 +2251,13 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
         if ambient_wash is not None:
             wash = _ambient_wash(renderer, world_width, world_height, ambient_wash, ambient_wash_bottom)
             renderer.screen.blit(wash, (world_x, 0))
-        # the additive passes below draw straight to the screen — in focus mode
-        # they must respect the camera box like the world surfaces did
+        # Additive passes draw to the screen, so respect the focus-mode camera clip.
         if camera_clip is not None:
             renderer.screen.set_clip(camera_clip.move(world_x, 0))
-        # `_glow` emissive overlays composite after the multiply so lit windows
-        # and lamp heads stay crisp inside the darkened scene. MAX (not ADD)
-        # keeps the overlay's own warm hue as a per-channel floor instead of
-        # summing past clamp into flat white.
+        # MAX blend after the multiply keeps emissive hues instead of clipping to white.
         for overlay, (ex, ey) in emissive_draws:
             renderer.screen.blit(overlay, (world_x + ex, ey), special_flags=pygame.BLEND_RGB_MAX)
-        # additive pass: at day (no multiply) this is the whole glow; after dark
-        # it is only a soft bloom over the pools the lightmap already carved
+        # Additive bloom over the lamp pools.
         bloom_scale = glow_scale if ambient_mult is None else glow_scale * 0.35
         for cx, cy, glow_color, radius_tiles, strength in glow_draws:
             radius = max(6, int(active_tile_size * radius_tiles))

@@ -49,7 +49,6 @@ def draw_metrics_overlay(renderer: "Any", scene: "Any") -> None:
     spark_h = max(16, int(tile * 1.0))
     spark_gap = max(6, tile // 8)
 
-    # width follows the widest line of content
     title_w = fonts["title"].size(str(metrics.get("title", "Metrics")))[0]
     if metrics.get("subtitle"):
         title_w = max(title_w, fonts["small"].size(str(metrics["subtitle"]))[0])
@@ -73,7 +72,6 @@ def draw_metrics_overlay(renderer: "Any", scene: "Any") -> None:
     surface = renderer.screen
     chrome = active_chrome(renderer)
 
-    # drop shadow then the chrome's floating card
     shadow = pygame.Surface((rect.width + 8, rect.height + 8), pygame.SRCALPHA)
     pygame.draw.rect(shadow, (0, 0, 0, 70), shadow.get_rect(), border_radius=12)
     surface.blit(shadow, (rect.x - 2, rect.y + 2))
@@ -148,7 +146,6 @@ def _draw_sparkline(surface: pygame.Surface, rect: pygame.Rect, spec: dict, font
         pygame.draw.polygon(area, (*line_color, 70), [(px - rect.x, py - rect.y) for px, py in fill])
         surface.blit(area, rect.topleft)
         pygame.draw.lines(surface, line_color, False, pts, 2)
-    # mark the latest sample
     pygame.draw.circle(surface, line_color, pts[-1], 3)
     pygame.draw.circle(surface, chrome.text_on_card, pts[-1], 3, width=1)
 

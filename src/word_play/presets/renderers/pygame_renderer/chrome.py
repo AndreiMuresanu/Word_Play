@@ -21,7 +21,6 @@ RGB = tuple[int, int, int]
 @dataclass(frozen=True, slots=True)
 class Chrome:
     name: str
-    # window / world backdrop
     backdrop: RGB
     # large fixed panels (HUD, sidebar)
     panel: RGB
@@ -33,21 +32,17 @@ class Chrome:
     # floating card (inspector, end overlay, metrics)
     card: RGB
     card_edge: RGB
-    # text
     text_on_card: RGB
     text_on_card_soft: RGB
     text_on_panel: RGB
     text_on_panel_dim: RGB
-    # accents
     accent: RGB                     # headers, highlights
     accent_deep: RGB                # borders, pins, prompts
     selection: RGB                  # selection ring
     focus: RGB                      # camera-follow ring
-    # speech bubbles
     bubble_fill: RGB
     bubble_edge: RGB
     bubble_text: RGB
-    # terminal panel
     term_bg: RGB
     term_edge: RGB
     term_edge_soft: RGB
@@ -63,12 +58,10 @@ class Chrome:
     term_transcript_text: RGB
     term_track: RGB
     term_thumb: RGB
-    # painter style switches
     corner_style: str = "pins"      # "pins" | "none"
     panel_texture: str = "grain"    # "grain" | "flat"
     radius_scale: float = 1.0
 
-    # ── panel painters (style-branched, shared implementation) ────────────────
 
     def draw_panel(self, surface: pygame.Surface, rect: pygame.Rect, *, edge_left: bool = False, edge_top: bool = False) -> None:
         """A flat slab for large fixed panels (terminal, HUD, sidebar)."""
@@ -102,7 +95,6 @@ class Chrome:
                 pygame.draw.circle(surface, self.accent, (cx - 1, cy - 1), 1)
 
 
-# ── shipped chrome styles ──────────────────────────────────────────────────────
 
 # The dark terminal palette shared by the rustic and slate chromes.
 _DARK_TERMINAL: dict[str, RGB] = dict(
@@ -151,8 +143,7 @@ RUSTIC = Chrome(
     panel_texture="grain",
 )
 
-# Dark instrumentation chrome for sci-fi / lab / factory environments — the
-# terminal's slate-and-cyan family extended to every panel.
+# Dark slate-and-cyan chrome for sci-fi, lab and factory environments.
 SLATE = Chrome(
     name="slate",
     backdrop=(12, 14, 18),

@@ -69,8 +69,7 @@ class Visible_Renderables_Extractor(Render_Extractor):
             if renderable is None or not renderable.visible or _is_in_any_inventory(entity, env):
                 continue
             renderables.append((renderable.z_index, entity, renderable))
-        # z first, then north-to-south within a layer so sprites that overhang
-        # their tile (tall trees) overlap the things behind them correctly
+        # z first, then north to south so tall sprites overlap correctly
         renderables.sort(key=lambda item: (item[0], -_world_y(item[1])))
         scene.layers["world.renderables"] = renderables
 

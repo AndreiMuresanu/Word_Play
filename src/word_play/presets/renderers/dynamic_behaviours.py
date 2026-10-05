@@ -83,46 +83,35 @@ def resolve_dynamic_behaviour(name: str | None) -> Dynamic_Behaviour | None:
     return DYNAMIC_BEHAVIOURS.get(name)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  The interactive catalog — the exciting verbs of a living town.
-# ══════════════════════════════════════════════════════════════════════════════
-# Missing pose art falls back to the base sprite and missing effect sprites are
-# skipped, so every one of these is safe to activate against any sprite — packs
-# add the matching art later, the juice (shake/impact/emote) is always procedural.
+# Missing pose or effect art is skipped, so any behaviour is safe on any sprite.
 
-# ── predator & prey: the heart of the drama ──────────────────────────────────
+# predator & prey
 register_dynamic_behaviour(
-    # a lunge: attack pose, a spark that punches forward, a jolt of recoil, fury
     Dynamic_Behaviour(pose="attacking", effect="spark", effect_forward=0.85,
                       effect_scale=0.6, shake=0.05, impact=True, emote="anger"),
     "hunting", "attacking", "striking", "lunging",
 )
 register_dynamic_behaviour(
-    # the victim: violent shiver, a red ! of panic, chips of dust flying off
     Dynamic_Behaviour(effect="dust", effect_forward=-0.3, effect_scale=0.5,
                       shake=0.14, emote="alarm"),
     "hurt", "struck", "wounded",
 )
 register_dynamic_behaviour(
-    # bolting away: a hard shiver, alarm, dust kicked up behind
     Dynamic_Behaviour(effect="dust", effect_forward=-0.5, effect_scale=0.45,
                       shake=0.1, emote="alarm"),
     "fleeing", "startled", "panicking", "spooked",
 )
 register_dynamic_behaviour(
-    # a sheepdog / an alerted guard: barking, anger, a small forward puff
     Dynamic_Behaviour(effect="dust", effect_forward=0.6, effect_scale=0.4,
                       shake=0.05, emote="anger"),
     "barking", "herding", "chasing",
 )
 register_dynamic_behaviour(
-    # a cat's coiled pounce: low shiver, gold spark, no emote (silent hunter)
     Dynamic_Behaviour(pose="attacking", effect="sparkle", effect_forward=0.7,
                       effect_scale=0.5, shake=0.06, impact=True),
     "pouncing", "stalking",
 )
 register_dynamic_behaviour(
-    # peaceful grazing / nibbling: the faintest idle bob, no drama
     Dynamic_Behaviour(shake=0.015),
     "grazing", "nibbling", "pecking",
 )
@@ -131,15 +120,13 @@ register_dynamic_behaviour(
     "alerting", "watchful",
 )
 
-# ── the logging camp: felling a grove ─────────────────────────────────────────
+# logging
 register_dynamic_behaviour(
-    # the axe: chopping pose, woodchips (dust) punching off the swing, a work-jolt
     Dynamic_Behaviour(pose="chopping", effect="dust", effect_forward=0.6,
                       effect_scale=0.5, shake=0.04, impact=True),
     "chopping", "cutting", "felling",
 )
 register_dynamic_behaviour(
-    # the tree taking the hit: a heavy tremble in place (no pose, no emote)
     Dynamic_Behaviour(shake=0.05),
     "shaking", "trembling", "toppling",
 )
@@ -149,7 +136,7 @@ register_dynamic_behaviour(
     "mining", "digging",
 )
 
-# ── the smithy & workshops: sparks fly ───────────────────────────────────────
+# smithing & workshops
 register_dynamic_behaviour(
     Dynamic_Behaviour(pose="repairing", effect="spark", effect_forward=0.5,
                       effect_scale=0.5, shake=0.05, impact=True),
@@ -168,7 +155,7 @@ register_dynamic_behaviour(
     "scanning",
 )
 
-# ── the kitchen, farm & plaza chores ─────────────────────────────────────────
+# kitchen, farm & plaza chores
 register_dynamic_behaviour(
     Dynamic_Behaviour(pose="cooking", effect="steam", effect_forward=0.4, effect_scale=0.5),
     "cooking",
@@ -194,19 +181,18 @@ register_dynamic_behaviour(
     "watering",
 )
 
-# ── the lake ─────────────────────────────────────────────────────────────────
-# an angler: rod pose facing the water, a cast splash a tile ahead on the surface
+# lake
 register_dynamic_behaviour(
     Dynamic_Behaviour(pose="fishing", face="up", effect="catch_splash", effect_forward=1.0),
     "fishing", "angling",
 )
 register_dynamic_behaviour(
-    # the wake trails BEHIND the boat (negative forward)
+    # negative forward: the wake trails behind the boat
     Dynamic_Behaviour(pose="rowing", effect="splash", effect_forward=-0.6, effect_scale=0.5),
     "rowing", "paddling",
 )
 
-# ── carrying, play & rest ────────────────────────────────────────────────────
+# carrying, play & rest
 register_dynamic_behaviour(
     Dynamic_Behaviour(pose="carrying"),
     "carrying", "hauling",

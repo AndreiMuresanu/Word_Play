@@ -294,7 +294,6 @@ def _resolve_wall_sprite_uncached(
             None,
         )
         if wall_root is None:
-            # missing wall art degrades to the caller's placeholder, not a crash
             return None
         session.wall_root_cache[wall_set] = wall_root
 

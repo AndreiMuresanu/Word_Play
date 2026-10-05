@@ -541,8 +541,8 @@ This preserves generality while allowing richer views where the data exists.
 A `Renderable` separates **which sprite** (`sprite_path` — a literal path or a
 theme sprite-name) from **how it renders** (`behaviour` — a preset that casts
 light, smokes, flickers, or lays walk-on floor terrain). Behaviours are
-theme-independent and never pick a sprite. See **[BEHAVIOURS.md](./BEHAVIOURS.md)**
-for the preset catalogue and how to register your own.
+theme-independent and never pick a sprite. The presets live in `behaviours.py`;
+add your own with `register_behaviour`.
 
 Two more generality knobs on `Renderable`:
 

@@ -72,15 +72,14 @@ class Pygame_Session_State:
     wall_set_cache: dict[str, dict[str, str]] = field(default_factory=dict)
     overlay_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(24))
     window_size: tuple[int, int] | None = None
-    # Persistent per-frame layer surfaces (floor/shadow/entity/effect), reused
-    # across frames instead of reallocated — the single largest allocation churn.
+    # Per-frame layer surfaces, reused across frames.
     layer_surfaces: dict[str, Any] = field(default_factory=dict)
     layer_size: tuple[int, int] | None = None
     # Wall autotiling memoization: set name -> resolved root, and
     # (set name, cardinal connections) -> chosen sprite variant.
     wall_root_cache: dict[str, Any] = field(default_factory=dict)
     wall_variant_cache: dict[tuple[str, tuple[str, ...]], str | None] = field(default_factory=dict)
-    # auto_tiled_wall_sprites result, keyed by the wall entities' identity/layout.
+    # auto_tiled_wall_sprites result, keyed by wall set and position.
     wall_override_key: Any = None
     wall_override_result: dict[Any, str] = field(default_factory=dict)
     # fitted_tile_size memo keyed by (grid, sidebar, hud, desktop, base tile).
@@ -108,8 +107,7 @@ class Pygame_View_State:
     # EMA of the sim-step cadence so glides span the whole interval
     glide_interval_ema: float = 1.0
     glide_last_change: float = 0.0
-    # Float camera center (tile coords) for focus mode — eases toward the focus
-    # entity so the view pans smoothly instead of lurching a whole tile.
+    # Float camera centre (tile coords) for focus mode.
     camera_center: tuple[float, float] | None = None
     camera_pan_time: float = 0.0
     # Fractional part of the camera window origin this frame (0..1 tiles); the

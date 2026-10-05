@@ -11,9 +11,7 @@ No pygame dependency — pure filesystem.
 from __future__ import annotations
 
 
-# Search preference for stem conflicts (multiple files with the same name):
-# characters and items are the common lookups; generated packs are addressed
-# via themes so they rank last.
+# Stem-conflict preference: characters and items first, generated packs last.
 _ROOT_PRIORITY = (
     "src/characters/",
     "src/items/",

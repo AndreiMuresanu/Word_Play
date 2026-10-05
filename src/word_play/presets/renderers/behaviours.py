@@ -13,7 +13,7 @@ resolves to a file).
 
 Behaviours are theme-independent: ``behaviour="light"`` shines the same in every
 pack. The registry below ships general presets covering the common cases; add
-your own with :func:`register_behaviour` (see BEHAVIOURS.md).
+your own with :func:`register_behaviour`.
 """
 
 from __future__ import annotations
@@ -40,9 +40,7 @@ class Render_Behaviour:
     floor: bool = False
 
 
-# ── the preset registry ───────────────────────────────────────────────────────
-# Keyed by behaviour name; several names can share one behaviour (aliases). Glow
-# values are tuned to read at dusk/night without blowing out at 1x zoom.
+# Glow values are tuned to read at dusk/night without blowing out at 1x zoom.
 RENDER_BEHAVIOURS: dict[str, Render_Behaviour] = {}
 
 
@@ -59,7 +57,7 @@ def resolve_behaviour(name: str | None) -> Render_Behaviour | None:
     return RENDER_BEHAVIOURS.get(name)
 
 
-# warm light sources ──────────────────────────────────────────────────────────
+# warm light sources
 register_behaviour(Render_Behaviour(glow=(255, 196, 132), glow_radius=2.2, glow_strength=1.0),
                    "light", "glow", "lit")
 register_behaviour(Render_Behaviour(glow=(255, 190, 110), glow_radius=2.8, glow_strength=1.0),
@@ -71,7 +69,7 @@ register_behaviour(Render_Behaviour(glow=(255, 206, 150), glow_radius=1.4, glow_
 register_behaviour(Render_Behaviour(glow=(150, 104, 62), glow_radius=1.4, glow_strength=1.0),
                    "doorway", "door_glow")
 
-# fire & hearths (glow + flicker, often smoke) ─────────────────────────────────
+# fire & hearths (glow + flicker, often smoke)
 register_behaviour(Render_Behaviour(glow=(240, 150, 80), glow_radius=2.4, glow_strength=1.15,
                                     flicker=0.12, smoke=True),
                    "hearth", "fireplace")
@@ -89,7 +87,7 @@ register_behaviour(Render_Behaviour(glow=(255, 140, 60), glow_radius=2.6, glow_s
 register_behaviour(Render_Behaviour(glow=(255, 90, 50), glow_radius=1.6, glow_strength=1.1, flicker=0.10),
                    "ember", "coals", "lava", "magma")
 
-# cool / magical light ─────────────────────────────────────────────────────────
+# cool / magical light
 register_behaviour(Render_Behaviour(glow=(150, 180, 230), glow_radius=2.2, glow_strength=0.9),
                    "cool_light", "moonlight")
 register_behaviour(Render_Behaviour(glow=(130, 180, 240), glow_radius=1.8, glow_strength=1.0, flicker=0.08),
@@ -99,10 +97,10 @@ register_behaviour(Render_Behaviour(glow=(110, 156, 215), glow_radius=1.5, glow_
 register_behaviour(Render_Behaviour(glow=(170, 120, 240), glow_radius=2.2, glow_strength=1.15, flicker=0.15),
                    "portal", "vortex")
 
-# smoke / steam only (no light) ────────────────────────────────────────────────
+# smoke / steam only (no light)
 register_behaviour(Render_Behaviour(smoke=True), "chimney", "smoke", "steam", "vent")
 
-# walk-on ground terrain ───────────────────────────────────────────────────────
+# walk-on ground terrain
 register_behaviour(Render_Behaviour(floor=True),
                    "floor", "bridge", "deck", "boardwalk", "rug", "road", "carpet", "platform")
 
