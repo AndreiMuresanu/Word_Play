@@ -46,9 +46,11 @@ class Pygame_Renderer(Renderer):
 
             apply_mood(self.beautify, mood)
         if default_floor_sprite is None:
-            # the theme's default_floor, else a procedural neutral tile (never a
-            # town asset for themeless envs)
-            themed_floor = None if self.theme is None else self.theme.sprite("default_floor")
+            # the theme's default_floor, else its grass, else a procedural
+            # neutral tile (never a town asset for themeless envs)
+            themed_floor = None
+            if self.theme is not None:
+                themed_floor = self.theme.sprite("default_floor") or self.theme.sprite("grass")
             default_floor_sprite = themed_floor or NEUTRAL_FLOOR_SPRITE
         self.default_floor_sprite = default_floor_sprite
         self.extractors: list[Render_Extractor] = list(extractors or default_pygame_extractors(layout))

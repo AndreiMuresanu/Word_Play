@@ -341,9 +341,9 @@ def interpolated_entity_screen_position(
         interval = now - view.glide_last_change
         if 0.05 < interval < 5.0:
             view.glide_interval_ema = 0.6 * view.glide_interval_ema + 0.4 * interval
-            view.glide_last_change = now
-        elif view.glide_last_change == 0.0:
-            view.glide_last_change = now
+        # always advance, else one >=5s stall (LLM wait) pins every later
+        # interval to the stale stamp and the EMA never learns again
+        view.glide_last_change = now
         was_resting = progress >= 1.0
         delay = 0.0
         if abs(target_x - shown_x) + abs(target_y - shown_y) > 3.2:
@@ -1608,7 +1608,9 @@ def draw_ground_fringes(
     for item in background:
         if item.get("kind") == "wall":
             continue
-        role = sprite_to_role.get(item.get("sprite"))
+        # background tiles may carry bare theme names; compare resolved paths
+        sprite = item.get("sprite")
+        role = None if sprite is None else sprite_to_role.get(lookup_sprite(theme, str(sprite)))
         if role is not None:
             role_at[(int(item["x"]), int(item["y"]))] = role
     if not role_at:
@@ -1859,19 +1861,22 @@ def auto_tiled_wall_sprites(
             wall_positions.add(world_position)
             wall_entities.append((entity, renderable, world_position))
 
-    cache_key = tuple((id(entity), renderable.wall_set, position) for entity, renderable, position in wall_entities)
+    # Memo on (wall_set, position): replay rebuilds Entity objects every frame,
+    # so an id(entity) key could match while the cached dict pointed at freed
+    # objects. The per-position result is re-mapped onto the live entities.
+    cache_key = tuple((renderable.wall_set, position) for _, renderable, position in wall_entities)
     if cache_key == session.wall_override_key:
-        return session.wall_override_result
-
-    resolved_sprites: dict[Entity, str] = {}
-    for entity, renderable, (wx, wy) in wall_entities:
-        neighbors = wall_neighbor_mask(wx, wy, wall_positions)
-        resolved = resolve_wall_sprite(renderer, renderable.wall_set, neighbors)
-        if resolved is not None:
-            resolved_sprites[entity] = resolved
-    session.wall_override_key = cache_key
-    session.wall_override_result = resolved_sprites
-    return resolved_sprites
+        by_position = session.wall_override_result
+    else:
+        by_position: dict[tuple[int, int], str] = {}
+        for _, renderable, (wx, wy) in wall_entities:
+            neighbors = wall_neighbor_mask(wx, wy, wall_positions)
+            resolved = resolve_wall_sprite(renderer, renderable.wall_set, neighbors)
+            if resolved is not None:
+                by_position[(wx, wy)] = resolved
+        session.wall_override_key = cache_key
+        session.wall_override_result = by_position
+    return {entity: by_position[pos] for entity, _, pos in wall_entities if pos in by_position}
 
 
 def _floor_animation_parity(renderer: "Pygame_Renderer") -> int:
@@ -2230,10 +2235,12 @@ def render_environment(renderer: "Pygame_Renderer", env: "Environment", scene: A
                 smoke_draws.append((draw_rect.x + draw_rect.width // 2, draw_rect.y, id(entity)))
             if light_level > 0.05 and renderable.wall_set is None:
                 sprite = resolve_sprite(renderer.theme, renderable.sprite_path)
-                emissive_h = sprite_draw_height(renderer, get_or_load_image(renderer, sprite), draw_rect.width)
-                overlay = get_emissive_overlay(renderer, sprite, draw_rect.width, emissive_h, light_level)
-                if overlay is not None:
-                    emissive_draws.append((overlay, (draw_rect.x, draw_rect.y - (emissive_h - draw_rect.width))))
+                base_image = get_or_load_image(renderer, sprite)
+                if base_image is not None:  # missing literal art: no glow, draw_entity placeholders it
+                    emissive_h = sprite_draw_height(renderer, base_image, draw_rect.width)
+                    overlay = get_emissive_overlay(renderer, sprite, draw_rect.width, emissive_h, light_level)
+                    if overlay is not None:
+                        emissive_draws.append((overlay, (draw_rect.x, draw_rect.y - (emissive_h - draw_rect.width))))
             draw_entity(
                 renderer,
                 entity,

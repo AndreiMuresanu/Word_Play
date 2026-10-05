@@ -113,3 +113,28 @@ def test_every_theme_renders_a_frame_without_rewriting_sprites():
         env.render()
         env.render()
         assert [e.get_component(Renderable).sprite_path for e in entities] == names, theme
+
+
+def test_missing_literal_sprite_survives_lit_moods():
+    """A literal path that doesn't exist must placeholder, not crash, even when
+    the emissive pre-pass runs (any mood with light_level > 0)."""
+    from word_play.core.entity import Entity
+    from word_play.presets.entity_orderings import randomize_agent_order
+    from word_play.presets.environments.simple_2d_grid_world import Simple_2D_Grid_World
+    from word_play.presets.movement.simple_2d_grid import Position_2D
+    from word_play.presets.renderers import Grid_Layout_Adapter, Pygame_Renderer
+
+    renderer = Pygame_Renderer(Grid_Layout_Adapter(), tile_size=24, mood="night")
+    ghost = Entity(
+        name="ghost",
+        position=Position_2D(1, 1),
+        components=[Renderable(sprite_path="does/not/exist.png")],
+    )
+    env = Simple_2D_Grid_World(
+        description="missing art",
+        entities=[ghost],
+        entity_order=randomize_agent_order,
+        renderer=renderer,
+    )
+    env.render()
+    env.render()

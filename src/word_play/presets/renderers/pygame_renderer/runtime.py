@@ -355,6 +355,9 @@ def init_pygame_if_needed(renderer: "Pygame_Renderer") -> None:
 
     pygame.init()
     pygame.font.init()
+    from .fonts import reset_font_caches
+
+    reset_font_caches()  # fonts from a previous pygame lifetime are dead
     renderer.screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Environment Render")
     runtime.session.pygame_initialized = True

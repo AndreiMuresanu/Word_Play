@@ -2,8 +2,9 @@
 
 ``pygame.font.SysFont`` construction runs font matching (expensive) and
 ``font.render`` re-rasterizes identical strings — both used to run every
-frame. Fonts returned by :func:`get_font` live for the whole process, so
-surfaces cached by ``(font, text, color)`` can never go stale.
+frame. Fonts returned by :func:`get_font` live until :func:`reset_font_caches`
+(run on pygame init), so surfaces cached by ``(font, text, color)`` can
+never go stale.
 """
 
 from __future__ import annotations
@@ -18,6 +19,17 @@ _TEXT: OrderedDict = OrderedDict()
 _WRAP: OrderedDict = OrderedDict()
 _TEXT_CAP = 4096
 _WRAP_CAP = 4096
+
+
+def reset_font_caches() -> None:
+    """Drop fonts and rendered text; call after ``pygame.quit()``/re-init.
+
+    Font objects die with the font module, so a renderer created after
+    ``replay()`` quit pygame must not be handed the stale ones back.
+    """
+    _FONTS.clear()
+    _TEXT.clear()
+    _WRAP.clear()
 
 
 def get_font(size: int, *, bold: bool = False) -> Any:
