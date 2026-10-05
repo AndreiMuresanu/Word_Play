@@ -1,0 +1,112 @@
+{
+  "chrome": "rustic",
+  "ground_precedence": {
+    "grass": 5,
+    "path": 3,
+    "planter": 4,
+    "plaza": 2,
+    "street": 1,
+    "water": 0
+  },
+  "manifest_version": 1,
+  "name": "interactive_city",
+  "role_glow": {
+    "door": [
+      [
+        150,
+        104,
+        62
+      ],
+      1.4,
+      1.0
+    ],
+    "fountain": [
+      [
+        110,
+        156,
+        215
+      ],
+      1.5,
+      1.0
+    ],
+    "lamp": [
+      [
+        255,
+        190,
+        110
+      ],
+      2.8,
+      1.0
+    ],
+    "stove": [
+      [
+        210,
+        126,
+        62
+      ],
+      2.2,
+      1.2
+    ]
+  },
+  "role_smoke": [
+    "stove"
+  ],
+  "roles": {
+    "barrel": "barrel.png",
+    "bed": "bed.png",
+    "bench": "park_bench.png",
+    "cafe": "cafe_wood.png",
+    "chair": "chair.png",
+    "cottage": "civic_limestone.png",
+    "cottage_straw": "cottage_straw.png",
+    "crate": "produce_crate.png",
+    "default_floor": "meadow_grass.png",
+    "door": "door.png",
+    "floor_stone": "stone_floor.png",
+    "floor_wood": "wooden_floor.png",
+    "fountain": "town_fountain.png",
+    "fountain_water": "fountain_tile.png",
+    "grass": "meadow_grass.png",
+    "lamp": "streetlamp.png",
+    "notice_board": "notice_board.png",
+    "parcels": "parcel_stack.png",
+    "path": "park_path.png",
+    "planter": "flower_planter.png",
+    "plaza": "cobblestone_plaza.png",
+    "rug": "rug.png",
+    "shelf": "shelf.png",
+    "sign_books": "sign_books.png",
+    "sign_bread": "sign_bread.png",
+    "sign_flowers": "sign_flowers.png",
+    "sign_tools": "sign_tools.png",
+    "stall_books": "bookshop_kiosk.png",
+    "stall_bread": "bakery_kiosk.png",
+    "stall_flowers": "flower_stall.png",
+    "stall_tools": "workshop_kiosk.png",
+    "stove": "stove.png",
+    "street": "brick_street.png",
+    "table": "table.png",
+    "tall_tree": "tall_tree.png",
+    "tall_tree_b": "tall_tree_b.png",
+    "tree": "city_tree.png",
+    "tree_2": "city_tree_b.png",
+    "tree_3": "city_tree_c.png",
+    "tree_dark": "city_tree_dark.png",
+    "tree_fruit": "city_tree_fruit.png",
+    "villager_artist": "artist.png",
+    "villager_baker": "baker.png",
+    "villager_bookseller": "bookseller.png",
+    "villager_cafe_owner": "cafe_owner.png",
+    "villager_carpenter": "carpenter.png",
+    "villager_courier": "courier.png",
+    "villager_florist": "florist.png",
+    "villager_gardener": "gardener.png",
+    "water": "water.png",
+    "workshop": "workshop_slate.png"
+  },
+  "wall_roles": {
+    "wall": "timber_wall",
+    "wall_brick": "brick_wall",
+    "wall_stone": "stone_wall"
+  }
+}
