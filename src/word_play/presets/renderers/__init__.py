@@ -22,6 +22,18 @@ from .pygame_renderer.interactive_env import (
     record_step,
 )
 from .pygame_renderer.renderable import Renderable
+from .behaviours import (
+    Render_Behaviour,
+    apply_behaviour,
+    register_behaviour,
+    resolve_behaviour,
+)
+from .dynamic_behaviours import (
+    Dynamic_Behaviour,
+    register_dynamic_behaviour,
+    resolve_dynamic_behaviour,
+)
+from .themes import Theme, available_themes, resolve_theme
 from .pygame_renderer.replay_and_live import (
     ReplayFrameEnvironment,
     default_replay_renderer,
@@ -36,22 +48,39 @@ _LAZY_EXPORT_MODULES = {
     "Pygame_Renderer": ".pygame_renderer.renderer",
     "render_environment": ".pygame_renderer.draw",
     "init_pygame_if_needed": ".pygame_renderer.runtime",
+    "Beautify_Config": ".pygame_renderer.beautify",
+    "MOODS": ".pygame_renderer.beautify",
+    "Mood": ".pygame_renderer.beautify",
+    "apply_mood": ".pygame_renderer.beautify",
 }
 
 
 __all__ = [
+    "Beautify_Config",
     "ExperimentRecorder",
     "Grid_Layout_Adapter",
+    "MOODS",
+    "Mood",
+    "apply_mood",
     "Position_Layout_Adapter",
     "Render_Context",
     "Render_Event",
     "Render_Extractor",
     "Render_Scene",
     "Renderable",
+    "Render_Behaviour",
+    "register_behaviour",
+    "resolve_behaviour",
+    "apply_behaviour",
+    "Dynamic_Behaviour",
+    "register_dynamic_behaviour",
+    "resolve_dynamic_behaviour",
     "Renderer",
     "Renderer_State",
     "ReplayFrameEnvironment",
     "SinglePointLayout",
+    "available_themes",
+    "Theme",
     "capture_environment_frame",
     "default_experiment_log_path",
     "default_replay_renderer",
@@ -63,6 +92,7 @@ __all__ = [
     "record_step",
     "render_environment",
     "replay",
+    "resolve_theme",
     "replay_frames",
     "replay_log_path",
 ]

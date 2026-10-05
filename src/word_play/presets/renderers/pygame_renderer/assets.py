@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any
 
 import pygame
 
+from ..themes import MISSING_ROLE_PREFIX, NEUTRAL_FLOOR_SPRITE, _project_root, is_sprite_name, resolve_sprite
+from .beautify import build_soft_shadow, harmonize_surface
 from .runtime import pygame_runtime
 from .wall_geometry import adjacent_wall_variant_name, wall_connections
 
@@ -14,12 +16,48 @@ if TYPE_CHECKING:
 
 def candidate_asset_paths(asset_name: str) -> list[Path]:
     """Return the filesystem locations to try for a sprite or asset name."""
-    project_root = Path(__file__).resolve().parents[4]
+    project_root = _project_root()
     return [
         Path(asset_name),
         project_root / asset_name,
         project_root / "sprite_library" / asset_name,
     ]
+
+
+
+
+def neutral_floor_surface() -> pygame.Surface:
+    """A quiet procedural ground tile for environments with no theme or floor art.
+
+    Unlike the magenta missing-role checker, this is a legitimate default (an
+    intentional neutral stage, not an authoring error), so it stays subtle: a
+    barely-there two-tone check with a few deterministic speckles.
+    """
+    size, cell = 16, 8
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    for cy in range(0, size, cell):
+        for cx in range(0, size, cell):
+            color = (74, 78, 84) if ((cx + cy) // cell) % 2 == 0 else (70, 74, 80)
+            surface.fill(color, pygame.Rect(cx, cy, cell, cell))
+    for i, (sx, sy) in enumerate(((3, 5), (11, 2), (7, 12), (13, 10))):
+        speckle = (66, 70, 76) if i % 2 else (80, 84, 90)
+        surface.fill(speckle, pygame.Rect(sx, sy, 1, 1))
+    return surface
+
+
+def missing_role_surface(role: str) -> pygame.Surface:
+    """The magenta/black checkerboard drawn for roles a theme doesn't bind.
+
+    Loud on purpose (the classic missing-texture convention): the sim keeps
+    running and the author can see exactly which tile is unbound.
+    """
+    size, cell = 16, 4
+    surface = pygame.Surface((size, size), pygame.SRCALPHA)
+    for cy in range(0, size, cell):
+        for cx in range(0, size, cell):
+            color = (222, 44, 222) if ((cx + cy) // cell) % 2 == 0 else (16, 8, 16)
+            surface.fill(color, pygame.Rect(cx, cy, cell, cell))
+    return surface
 
 
 def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | None:
@@ -28,9 +66,26 @@ def get_or_load_image(renderer: "Pygame_Renderer", sprite_name: str) -> Any | No
     if sprite_name in session.image_cache:
         return session.image_cache[sprite_name]
 
+    if is_sprite_name(sprite_name):
+        # bare name ("tree"): theme, then library index, then placeholder
+        surface = get_or_load_image(renderer, resolve_sprite(renderer.theme, sprite_name))
+        session.image_cache[sprite_name] = surface
+        return surface
+
+    if sprite_name.startswith(MISSING_ROLE_PREFIX):
+        surface = missing_role_surface(sprite_name.removeprefix(MISSING_ROLE_PREFIX))
+        session.image_cache[sprite_name] = surface
+        return surface
+
+    if sprite_name == NEUTRAL_FLOOR_SPRITE:
+        surface = neutral_floor_surface()
+        session.image_cache[sprite_name] = surface
+        return surface
+
     for path in candidate_asset_paths(sprite_name):
         if path.exists() and path.is_file():
             surface = pygame.image.load(str(path)).convert_alpha()
+            surface = harmonize_surface(surface, sprite_name, renderer.beautify)
             session.image_cache[sprite_name] = surface
             return surface
 
@@ -55,13 +110,192 @@ def get_scaled_image(renderer: "Pygame_Renderer", sprite_name: str, width: int, 
     return scaled
 
 
-def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
-    """Choose the best wall sprite variant for a tile based on neighbors."""
+def _sibling(renderer: "Pygame_Renderer", sprite_name: str, suffix: str, *, exclude: tuple[str, ...] = ()) -> str | None:
+    """Return ``foo<suffix>.png`` if it exists next to ``foo.png`` (cached).
+
+    The file-name conventions that need no authoring: ``_2`` (second animation
+    frame), ``_back`` (rear view), ``_<pose>`` (dynamic-behaviour pose),
+    ``_glow`` (emissive overlay), ``_b``/``_c`` (ground variants).
+    """
     session = pygame_runtime(renderer).session
-    candidate_roots = candidate_asset_paths(wall_set)
-    wall_root = next((path for path in candidate_roots if path.exists() and path.is_dir()), None)
+    key = (suffix, sprite_name)
+    if key not in session.anim_sibling_cache:
+        sibling = None
+        if sprite_name.endswith(".png") and not sprite_name.endswith(("_2.png", f"{suffix}.png", *exclude)):
+            candidate = f"{sprite_name[:-4]}{suffix}.png"
+            if any(path.is_file() for path in candidate_asset_paths(candidate)):
+                sibling = candidate
+        session.anim_sibling_cache[key] = sibling
+    return session.anim_sibling_cache[key]
+
+
+def animation_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_2")
+
+
+def back_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_back")
+
+
+def pose_sibling(renderer: "Pygame_Renderer", sprite_name: str, pose: str) -> str | None:
+    return _sibling(renderer, sprite_name, f"_{pose}")
+
+
+def glow_sibling(renderer: "Pygame_Renderer", sprite_name: str) -> str | None:
+    return _sibling(renderer, sprite_name, "_glow", exclude=("_back.png",))
+
+
+def get_emissive_overlay(
+    renderer: "Pygame_Renderer",
+    sprite_name: str,
+    width: int,
+    height: int,
+    light_level: float,
+) -> Any | None:
+    """A '_glow' overlay scaled and pre-dimmed to the frame's darkness bucket."""
+    sibling = glow_sibling(renderer, sprite_name)
+    if sibling is None or light_level <= 0.05:
+        return None
+    bucket = min(10, max(1, int(round(light_level * 10))))
+
+    def build() -> Any | None:
+        scaled = get_scaled_image(renderer, sibling, width, height)
+        if scaled is None:
+            return None
+        overlay = scaled.copy()
+        level = int(255 * bucket / 10)
+        overlay.fill((level, level, level, 255), special_flags=pygame.BLEND_RGB_MULT)
+        # premultiply so fully transparent pixels contribute NOTHING to the screen
+        # blend (stray RGB in alpha-0 pixels would otherwise show as a grey box)
+        return overlay.premul_alpha()
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__emissive__", sibling, width, height, bucket), build)
+
+
+_FRINGE_DEPTH = 0.30    # fraction of a tile the softer material overhangs
+
+
+def _fringe_mask(renderer: "Pygame_Renderer", direction: str, size: int) -> pygame.Surface:
+    """A white alpha-gradient mask for one tile edge, with a scalloped border.
+
+    ``direction`` names the edge of the RECEIVING tile the fringe hugs:
+    "n" fades downward from the top edge, "w" rightward from the left, etc.
+    """
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__fringe_mask__", direction, size), lambda: _build_fringe_mask(direction, size))
+
+
+def _build_fringe_mask(direction: str, size: int) -> pygame.Surface:
+    depth = max(2, int(size * _FRINGE_DEPTH))
+    mask = pygame.Surface((size, size), pygame.SRCALPHA)
+    for lane in range(size):
+        # deterministic per-lane jitter: an organic scallop, not a ruler line
+        h = (lane * 2654435761 + size * 97) & 0xFFFFFFFF
+        lane_depth = depth + (h % 3) - 1
+        for d in range(lane_depth):
+            fade = 1.0 - d / max(1, lane_depth)
+            alpha = int(235 * fade * fade)
+            if direction == "n":
+                mask.set_at((lane, d), (255, 255, 255, alpha))
+            elif direction == "s":
+                mask.set_at((lane, size - 1 - d), (255, 255, 255, alpha))
+            elif direction == "w":
+                mask.set_at((d, lane), (255, 255, 255, alpha))
+            else:
+                mask.set_at((size - 1 - d, lane), (255, 255, 255, alpha))
+    return mask
+
+
+def get_fringe_strip(
+    renderer: "Pygame_Renderer",
+    sprite_name: str,
+    direction: str,
+    size: int,
+) -> Any | None:
+    """The softer neighbor's texture masked to overhang one edge of a tile.
+
+    Baked once per (sprite, edge, size): tile texture x edge mask via
+    BLEND_RGBA_MULT — soft ground transitions with zero extra art in the pack.
+    """
+    def build() -> Any | None:
+        tile = get_scaled_image(renderer, sprite_name, size, size)
+        if tile is None:
+            return None
+        strip = tile.convert_alpha().copy()
+        strip.blit(_fringe_mask(renderer, direction, size), (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+        return strip
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__fringe__", sprite_name, direction, size), build)
+
+
+def ground_variant_name(renderer: "Pygame_Renderer", sprite_name: str, x: int, y: int) -> str:
+    """Deterministically vary a ground tile when '_b'/'_c' siblings exist.
+
+    Large fields of one repeated tile read as wallpaper; if a pack ships
+    ``foo_b.png``/``foo_c.png`` next to ``foo.png``, tiles pick between them by
+    position hash (base kept dominant) — stable across frames, zero authoring.
+    """
+    variants = [
+        variant
+        for suffix, other in (("_b", "_c.png"), ("_c", "_b.png"))
+        if (variant := _sibling(renderer, sprite_name, suffix, exclude=(other,))) is not None
+    ]
+    if not variants:
+        return sprite_name
+
+    h = (x * 73856093) ^ (y * 19349663) ^ (len(sprite_name) * 83492791)
+    roll = (h & 0xFFFF) % 10
+    if roll < 6:
+        return sprite_name                       # base stays dominant
+    return variants[roll % len(variants)]
+
+
+def get_soft_shadow(renderer: "Pygame_Renderer", sprite_name: str, size: int) -> Any | None:
+    """Return a cached, silhouette-derived contact shadow for a sprite at ``size``."""
+    def build() -> Any | None:
+        scaled = get_scaled_image(renderer, sprite_name, size, size)
+        return None if scaled is None else build_soft_shadow(scaled, renderer.beautify)
+
+    cache = pygame_runtime(renderer).session.scaled_image_cache
+    return cache.get_or_build(("__shadow__", sprite_name, size), build)
+
+
+def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: dict[str, bool]) -> str | None:
+    """Choose the best wall sprite variant for a tile based on neighbors.
+
+    Memoized per (set, cardinal connections): the variant choice depends only
+    on which of the four cardinal neighbors are walls, so the filesystem probe
+    and scoring scan run at most once per distinct pattern per set.
+    """
+    session = pygame_runtime(renderer).session
+    connections = wall_connections(neighbors)
+    variant_key = (wall_set, connections)
+    if variant_key in session.wall_variant_cache:
+        return session.wall_variant_cache[variant_key]
+
+    result = _resolve_wall_sprite_uncached(renderer, wall_set, neighbors, connections)
+    session.wall_variant_cache[variant_key] = result
+    return result
+
+
+def _resolve_wall_sprite_uncached(
+    renderer: "Pygame_Renderer",
+    wall_set: str,
+    neighbors: dict[str, bool],
+    connections: tuple[str, ...],
+) -> str | None:
+    session = pygame_runtime(renderer).session
+    wall_root = session.wall_root_cache.get(wall_set)
     if wall_root is None:
-        raise FileNotFoundError(f"Wall set folder could not be resolved: '{wall_set}'.")
+        wall_root = next(
+            (path for path in candidate_asset_paths(wall_set) if path.exists() and path.is_dir()),
+            None,
+        )
+        if wall_root is None:
+            return None
+        session.wall_root_cache[wall_set] = wall_root
 
     available = session.wall_set_cache.get(wall_set)
     if available is None:
@@ -76,7 +310,7 @@ def resolve_wall_sprite(renderer: "Pygame_Renderer", wall_set: str, neighbors: d
     if target_variant in available:
         return f"{wall_set}/{available[target_variant]}"
 
-    target_connections = set(wall_connections(neighbors))
+    target_connections = set(connections)
     if len(target_connections) == 1:
         axis_fallback = "up_down" if next(iter(target_connections)) in {"up", "down"} else "left_right"
         if axis_fallback in available:

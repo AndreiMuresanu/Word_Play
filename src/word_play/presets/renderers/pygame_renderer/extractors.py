@@ -26,6 +26,11 @@ def _speech_step_is_visible(current_step: int, visible_step: Any) -> bool:
     return step_value in (current_step, current_step + 1)
 
 
+def _world_y(entity: Any) -> float:
+    position = getattr(entity, "position", None)
+    return float(getattr(position, "y", 0) or 0)
+
+
 def _is_in_any_inventory(item: Any, env: "Environment") -> bool:
     if "in_inventory" in getattr(item, "tags", []):
         return True
@@ -64,7 +69,8 @@ class Visible_Renderables_Extractor(Render_Extractor):
             if renderable is None or not renderable.visible or _is_in_any_inventory(entity, env):
                 continue
             renderables.append((renderable.z_index, entity, renderable))
-        renderables.sort(key=lambda item: item[0])
+        # z first, then north to south so tall sprites overlap correctly
+        renderables.sort(key=lambda item: (item[0], -_world_y(item[1])))
         scene.layers["world.renderables"] = renderables
 
 

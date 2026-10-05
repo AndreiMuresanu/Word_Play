@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import pygame
 
@@ -15,14 +17,79 @@ if TYPE_CHECKING:
 _PYGAME_RUNTIME_KEY = object()
 
 
+class LRU_Surface_Cache:
+    """A bounded, dict-compatible surface cache with least-recently-used eviction.
+
+    Long sims used to grow the scaled/glow/fringe caches without limit (every
+    distinct size, flip, and brightness bucket minted a new surface forever);
+    this keeps the hot working set and lets cold entries fall out.
+    """
+
+    __slots__ = ("_data", "max_entries")
+
+    def __init__(self, max_entries: int = 4096) -> None:
+        self._data: OrderedDict = OrderedDict()
+        self.max_entries = max_entries
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        try:
+            value = self._data[key]
+        except KeyError:
+            return default
+        self._data.move_to_end(key)
+        return value
+
+    def __contains__(self, key: Any) -> bool:
+        return key in self._data
+
+    def __getitem__(self, key: Any) -> Any:
+        value = self._data[key]
+        self._data.move_to_end(key)
+        return value
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        self._data[key] = value
+        self._data.move_to_end(key)
+        if len(self._data) > self.max_entries:
+            self._data.popitem(last=False)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def get_or_build(self, key: Any, build: Callable[[], Any]) -> Any:
+        """Return the cached value for ``key``, building (and caching) it once."""
+        if key not in self._data:
+            self[key] = build()
+        return self[key]
+
+
 @dataclass(slots=True)
 class Pygame_Session_State:
     pygame_initialized: bool = False
     image_cache: dict[str, Any] = field(default_factory=dict)
-    scaled_image_cache: dict[tuple[str, int, int], Any] = field(default_factory=dict)
+    scaled_image_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(4096))
+    anim_sibling_cache: dict[tuple[str, str], str | None] = field(default_factory=dict)
     wall_set_cache: dict[str, dict[str, str]] = field(default_factory=dict)
-    vignette_cache: dict[tuple[int, int], Any] = field(default_factory=dict)
+    overlay_cache: LRU_Surface_Cache = field(default_factory=lambda: LRU_Surface_Cache(24))
     window_size: tuple[int, int] | None = None
+    # Per-frame layer surfaces, reused across frames.
+    layer_surfaces: dict[str, Any] = field(default_factory=dict)
+    layer_size: tuple[int, int] | None = None
+    # Wall autotiling memoization: set name -> resolved root, and
+    # (set name, cardinal connections) -> chosen sprite variant.
+    wall_root_cache: dict[str, Any] = field(default_factory=dict)
+    wall_variant_cache: dict[tuple[str, tuple[str, ...]], str | None] = field(default_factory=dict)
+    # auto_tiled_wall_sprites result, keyed by wall set and position.
+    wall_override_key: Any = None
+    wall_override_result: dict[Any, str] = field(default_factory=dict)
+    # fitted_tile_size memo keyed by (grid, sidebar, hud, desktop, base tile).
+    fit_cache: dict[tuple, int] = field(default_factory=dict)
+    # Static floor bake: animation parity -> pre-rendered background surface.
+    floor_bake: dict[int, Any] = field(default_factory=dict)
+    floor_bake_key: Any = None
+    # Persistent lightmap buffers (quarter-res field + full-res destination).
+    lightmap_low: Any = None
+    lightmap_full: Any = None
 
 
 @dataclass(slots=True)
@@ -31,6 +98,21 @@ class Pygame_View_State:
     camera_focus_entity: Any | None = None
     camera_focus_radius_tiles: int = 1
     last_drawn_entity_rects: dict[Any, pygame.Rect] = field(default_factory=dict)
+    # smooth-movement traverses: entity -> (start_x, start_y, target_x, target_y, t0, duration, ease)
+    entity_glide: dict[Any, tuple[float, float, float, float, float, float, bool]] = field(default_factory=dict)
+    # entities currently gliding between tiles (drives faster walk animation)
+    entities_in_motion: set = field(default_factory=set)
+    # facing per entity: "right" (native), "left" (mirrored), "up" (rear view), "down"
+    entity_facing: dict[Any, str] = field(default_factory=dict)
+    # EMA of the sim-step cadence so glides span the whole interval
+    glide_interval_ema: float = 1.0
+    glide_last_change: float = 0.0
+    # Float camera centre (tile coords) for focus mode.
+    camera_center: tuple[float, float] | None = None
+    camera_pan_time: float = 0.0
+    # Fractional part of the camera window origin this frame (0..1 tiles); the
+    # composite pass converts it into a sub-tile pixel shift.
+    camera_frac: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass(slots=True)
@@ -75,12 +157,12 @@ def configure_renderer(
     renderer.render_context.private[_PYGAME_RUNTIME_KEY] = Pygame_Runtime_State()
     runtime = pygame_runtime(renderer)
     renderer.layout = layout
+    from .beautify import Beautify_Config
+
+    renderer.beautify = Beautify_Config()
     renderer.base_tile_size = tile_size
     renderer.display_safe_margin = 72
     apply_renderer_metrics(renderer, tile_size)
-    renderer.focus_outline_color = (245, 214, 102)
-    renderer.selection_outline_color = (128, 203, 255)
-    renderer.selection_panel_accent = (128, 203, 255)
     runtime.session.window_size = None
 
 
@@ -139,33 +221,45 @@ def apply_renderer_metrics(renderer: "Pygame_Renderer", tile_size: int) -> None:
     renderer.viewport_pad_n = max(renderer.margin, int(tile_size * 2.15))
 
     if pygame_runtime(renderer).session.pygame_initialized:
-        renderer.font = pygame.font.SysFont(None, renderer.tile_size)
-        renderer.small_font = pygame.font.SysFont(None, max(16, renderer.tile_size // 2))
-        renderer.sidebar_font = pygame.font.SysFont(None, max(13, int(renderer.tile_size * 0.32)))
-        renderer.hud_font = pygame.font.SysFont(None, max(20, renderer.tile_size // 2 + 6))
+        from .fonts import get_font
+
+        renderer.font = get_font(renderer.tile_size)
+        renderer.small_font = get_font(max(16, renderer.tile_size // 2))
+        renderer.hud_font = get_font(max(20, renderer.tile_size // 2 + 6))
         renderer.speech_fonts = [
-            pygame.font.SysFont(None, max(13, renderer.tile_size // 3)),
-            pygame.font.SysFont(None, max(11, renderer.tile_size // 4)),
-            pygame.font.SysFont(None, 10),
+            get_font(max(13, renderer.tile_size // 3)),
+            get_font(max(11, renderer.tile_size // 4)),
+            get_font(10),
         ]
 
 
+_desktop_cache: tuple[float, tuple[int, int]] | None = None
+
+
 def desktop_size() -> tuple[int, int]:
-    """Return the primary desktop size using display APIs meant for monitor geometry."""
+    """Return the primary desktop size using display APIs meant for monitor geometry.
+
+    Cached with a short TTL — this used to issue an SDL display query per frame.
+    """
+    global _desktop_cache
+    now = time.monotonic()
+    if _desktop_cache is not None and now - _desktop_cache[0] < 2.0:
+        return _desktop_cache[1]
+
+    size = (1440, 900)
     try:
         sizes = pygame.display.get_desktop_sizes()
-        if sizes:
-            width, height = sizes[0]
-            if width > 0 and height > 0:
-                return int(width), int(height)
     except Exception:
-        pass
+        sizes = []
+    if sizes and sizes[0][0] > 0 and sizes[0][1] > 0:
+        size = (int(sizes[0][0]), int(sizes[0][1]))
+    else:
+        info = pygame.display.Info()
+        if info.current_w > 0 and info.current_h > 0:
+            size = (int(info.current_w), int(info.current_h))
 
-    info = pygame.display.Info()
-    if info.current_w > 0 and info.current_h > 0:
-        return int(info.current_w), int(info.current_h)
-
-    return 1440, 900
+    _desktop_cache = (now, size)
+    return size
 
 
 def fitted_tile_size(
@@ -178,6 +272,35 @@ def fitted_tile_size(
 ) -> int:
     """Choose a tile size that fits the display while keeping small scenes legible."""
     screen_w, screen_h = desktop_size()
+    base_tile_memo = max(16, int(getattr(renderer, "base_tile_size", renderer.tile_size)))
+    session = pygame_runtime(renderer).session
+    memo_key = (grid_width, grid_height, sidebar_width, hud_visible, screen_w, screen_h, base_tile_memo)
+    memoized = session.fit_cache.get(memo_key)
+    if memoized is not None:
+        return memoized
+    result = _fit_tile_size(
+        renderer,
+        grid_width=grid_width,
+        grid_height=grid_height,
+        sidebar_width=sidebar_width,
+        hud_visible=hud_visible,
+        screen_w=screen_w,
+        screen_h=screen_h,
+    )
+    session.fit_cache[memo_key] = result
+    return result
+
+
+def _fit_tile_size(
+    renderer: "Pygame_Renderer",
+    *,
+    grid_width: int,
+    grid_height: int,
+    sidebar_width: int,
+    hud_visible: bool,
+    screen_w: int,
+    screen_h: int,
+) -> int:
     max_width = max(640, screen_w - renderer.display_safe_margin)
     max_height = max(480, screen_h - renderer.display_safe_margin)
     min_width = max(420, screen_w // 2)
@@ -230,6 +353,9 @@ def init_pygame_if_needed(renderer: "Pygame_Renderer") -> None:
 
     pygame.init()
     pygame.font.init()
+    from .fonts import reset_font_caches
+
+    reset_font_caches()  # fonts from a previous pygame lifetime are dead
     renderer.screen = pygame.display.set_mode((800, 600))
     pygame.display.set_caption("Environment Render")
     runtime.session.pygame_initialized = True

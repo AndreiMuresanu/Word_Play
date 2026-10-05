@@ -536,6 +536,69 @@ Examples:
 
 This preserves generality while allowing richer views where the data exists.
 
+## Renderable: sprite vs. behaviour
+
+A `Renderable` separates **which sprite** (`sprite_path` — a literal path or a
+theme sprite-name) from **how it renders** (`behaviour` — a preset that casts
+light, smokes, flickers, or lays walk-on floor terrain). Behaviours are
+theme-independent and never pick a sprite. The presets live in `behaviours.py`;
+add your own with `register_behaviour`.
+
+Two more generality knobs on `Renderable`:
+
+- `tint=(r, g, b)` (+ `tint_strength`) multiplies the sprite toward a color
+  while keeping the ink outline — one field covers team colors (CTF/KOTH),
+  coin ownership, berry/gem variants, predator marking. No per-variant art.
+- bare `sprite_path` names that the active theme does not bind fall back to a
+  **library-wide sprite index** (`renderers/sprite_index.py`): every PNG under
+  `sprite_library/src` is addressable by its exact filename stem
+  (`Renderable(sprite_path="sheep")` just works, theme or not). Unresolvable
+  names render the loud magenta placeholder — missing art never crashes a sim.
+
+## Themes (sprite packs)
+
+A theme is a folder of PNGs plus a `theme.json` that maps sprite-names to
+files (and says which names glow, smoke, or autotile as walls). Packs live in
+`sprite_library/src/generated/worlds/<name>/` (and `.../benchmarks/<name>/`);
+pick one by folder name:
+
+```python
+renderer = Pygame_Renderer(Grid_Layout_Adapter(), theme="rustic_town")
+Renderable(sprite_path="tree")               # the pack's tree
+Renderable(sprite_path="some/literal.png")   # bypasses the theme
+```
+
+`available_themes()` lists every pack. Names are resolved at draw time — the
+renderer never rewrites `sprite_path` — so switching the theme reskins the
+whole world. A pack can `"extends": "<other pack>"` and only list what changes.
+
+## UI chrome (switchable panel styling)
+
+Everything drawn AROUND the world — HUD, sidebar, terminal, inspector card,
+speech bubbles, metrics panel, end overlay — is a
+**Chrome** preset (`pygame_renderer/chrome.py`). Three ship: `rustic` (the
+wood-and-parchment town default, unchanged), `slate` (dark sci-fi
+instrumentation), `minimal` (light neutral). Select per theme via the
+`"chrome"` key in `theme.json`, or override with
+`Pygame_Renderer(..., chrome="slate")`. All procedural — no UI art required.
+
+The renderer's default floor comes from the theme's reserved `default_floor`
+role (falling back to `grass`); with no theme at all it renders a quiet
+procedural neutral tile — never a town asset.
+
+## Frame channels for archetype visuals
+
+- `world.overlay_tiles` — per-tile translucent washes or overlay sprites
+  (`[{"x", "y", "color": [r,g,b,a]} | {"x", "y", "sprite": name, "alpha": a}]`)
+  drawn above the ground, below entities: territory ownership, pollution or
+  resource density, lane markers.
+- `world.background_version` — optional int an environment bumps when it
+  mutates `world.background_tiles`; lets the static-floor bake skip content
+  fingerprinting.
+- `ui.metrics` — a stats card with optional sparklines drawn over the world
+  (`{"title", "rows": [{"label", "value"}], "series": [{"label", "values"}],
+  "anchor"}`); see `pygame_renderer/metrics_rendering.py` for the full shape.
+
 ## Conventions
 
 ### Prefer semantic event names
